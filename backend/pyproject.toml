@@ -29,4 +29,11 @@ package = false
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
 ]
+
+[tool.pytest.ini_options]
+# Tự động coi các hàm test async là bài test bất đồng bộ mà không cần phải viết @pytest.mark.asyncio trước mỗi hàm
+asyncio_mode = "auto"
+# Thư mục chứa code test
+testpaths = ["tests"]

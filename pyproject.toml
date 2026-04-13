@@ -10,3 +10,28 @@ dependencies = []
 
 [tool.uv.workspace]
 members = ["backend", "frontend"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.10",
+]
+
+[tool.ruff]
+# Giới hạn độ dài mỗi dòng code (chuẩn PEP8 nới lỏng)
+line-length = 100
+# Target phiên bản Python dự án của bạn (ví dụ 3.11)
+target-version = "py311"
+# Áp dụng ruff cho toàn bộ thư mục
+extend-exclude = [".venv", "__pycache__", "docs", "data"]
+
+[tool.ruff.lint]
+# Kích hoạt các rule kiểm tra code phổ biến (E: pycodestyle, F: Pyflakes, I: isort để tự động sắp xếp thư viện)
+select = ["E", "F", "I"]
+# Bỏ qua một số rule quá khắt khe nếu cần
+ignore = []
+
+[tool.ruff.format]
+# Dùng dấu nháy kép cho chuỗi (chuẩn chung)
+quote-style = "double"
+# Dùng space thay vì tab
+indent-style = "space"
