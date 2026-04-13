@@ -1,14 +1,17 @@
-<a id="top"></a>
+<a id="readme-top"></a>
 
 # Mental-Health-RAG-Agent
 
 A mental health support system utilizing Retrieval-Augmented Generation (RAG) to combine the reasoning power of large language models (LLMs) with accurate medical data (like the DSM-5). The system employs a Multi-Agent architecture to ensure accuracy, safety, and personalization during consultations.
 
 <div align="center">
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+  
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
+
 [![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)](https://www.docker.com/)
+
 [![GitHub Stars](https://img.shields.io/github/stars/NVIDIA-AI-Blueprints/retail-shopping-assistant?style=social)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/stargazers)
+
 [![GitHub last commit](https://img.shields.io/github/last-commit/NVIDIA-AI-Blueprints/retail-shopping-assistant)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/commits)
 
 </div>
@@ -24,7 +27,6 @@ A mental health support system utilizing Retrieval-Augmented Generation (RAG) to
 - [Prerequisites](#prerequisites)
 - [Hardware Requirements](#hardware-requirements)
 - [Quickstart Guide](#quickstart-guide)
-- [Contributing](#contributing)
 - [License](#license)
 
 ## Overview
@@ -98,13 +100,72 @@ This blueprint is designed with multiple configuration options. It is intended f
 
 ## Repository Structure Overview
 
-| Directory | Description |
-|-----------|-------------|
-| `backend/` | Core system: Contains FastAPI source code (`app/api`), RAG logic (`app/services`), AI Agents (`app/agents`), and Data Ingestion. |
-| `frontend/` | UI: Contains Streamlit source code (`app.py`, `pages/`, `components/`). |
-| `docs/` | Official project documentation (e.g., SRS.md, DFD.md). |
-| `notebooks/` | R&D environment using Jupyter Notebooks to test prompts and chunking. |
-| `_notes/` | Personal notes and local project SOPs (ignored by Git). |
+| Directory / File | Description |
+| :--- | :--- |
+| **`Root Workspace/`** | **Global configurations for the `uv` monorepo.** |
+| ├── `pyproject.toml` & `uv.lock` | Workspace configuration and dependency lock files for the entire project. |
+| ├── `.env` & `.env.example` | Environment variables (API keys, DB URLs). `.env` is secure and ignored by Git. |
+| **`backend/`** | **Core System: FastAPI application, LangGraph workflows, and RAG services.** |
+| ├── `app/api/` | RESTful API endpoints (e.g., `/chat`, `/health-scores`) receiving frontend requests. |
+| ├── `app/agents/` | Multi-Agent logic using LangGraph (Agent Nodes, State definitions, Graph compilation). |
+| ├── `app/services/` | Stateless AI services: Qdrant vector database search, OpenAI model integrations. |
+| ├── `app/db/` | Stateful database connections: Supabase/PostgreSQL for user accounts and chat history. |
+| ├── `app/ingestion/` | Standalone data pipelines (e.g., scripts to parse DSM-5 PDFs, embed, and upload to Qdrant). |
+| ├── `app/schemas/` | Pydantic models for strict input/output data validation. |
+| ├── `app/core/` | Application configurations, global constants, and security settings (CORS). |
+| ├── `data/` | Stores static medical documents (`raw/` for original PDFs, `processed/` for cleaned data). |
+| └── `tests/` | Automated testing suite utilizing `pytest` and `pytest-asyncio` to evaluate RAG accuracy. |
+| **`frontend/`** | **User Interface: Interactive Streamlit web application.** |
+| ├── `app.py` | Main entry point and routing for the Streamlit dashboard. |
+| ├── `pages/` | Individual application features (e.g., the Chat interface, Health tracking dashboard). |
+| └── `components/` | Reusable UI widgets and custom visual elements (e.g., chat bubbles, metric cards). |
+| **`docs/`** | **Official Project Documentation (System Blueprints).** |
+| ├── `SRDS.md` | Software Requirements and Design Specification. |
+| └── `DFD.md` | Data Flow Diagrams mapping the exact movement of data from User to Backend. |
+| **`notebooks/`** | **R&D Environment:** Jupyter notebooks for experimenting with chunking strategies and prompts. |
+
+### Project Structure
+
+```text
+Mental-Health-RAG-Agent/
+├── pyproject.toml           # Root Workspace configuration for uv, linking backend and frontend
+├── uv.lock                  # Common library version lock file for the entire project
+├── .python-version          # Python version automatically managed by uv
+├── .env                     # Contains actual API Keys (Secure - ignored by Git)
+├── .env.example             # Template file containing API Key names for public reference
+├── .gitignore               # Config to ignore junk, hidden, and environment files
+├── README.md                # Project introduction and setup guide
+│
+├── backend/                 # ================= [ CORE SYSTEM ] =================
+│   ├── pyproject.toml       # Backend-specific library management (FastAPI, LangGraph...)
+│   ├── app/                 # Main backend source code directory
+│   │   ├── api/             # Defines RESTful endpoints (e.g., /chat, /history)
+│   │   ├── core/            # Contains configurations, constants, and security (CORS)
+│   │   ├── agents/          # Contains LangGraph logic (Nodes, State, Graph)
+│   │   ├── services/        # Handles RAG processing, OpenAI model calls, Qdrant queries
+│   │   ├── schemas/         # Defines Pydantic models (Input/output data validation)
+│   │   ├── db/              # Database connection to Supabase (PostgreSQL)
+│   │   ├── ingestion/       # Contains one-way data ingestion pipelines
+│   │   │   └── load_dsm5.py # Reads PDF files, embeds, and uploads to Qdrant
+│   │   └── main.py          # Main entry point to run the FastAPI application
+│   ├── data/                # Stores static medical data
+│   │   ├── raw/             # Contains raw document files (e.g., dsm5_sample.pdf)
+│   │   └── processed/       # Contains data after preprocessing
+│   └── tests/               # Automated testing suite (pytest & pytest-asyncio)
+│
+├── frontend/                # ================= [ USER INTERFACE ] =================
+│   ├── pyproject.toml       # Frontend-specific library management (Streamlit, Plotly...)
+│   ├── app.py               # Main entry point for the Streamlit UI
+│   ├── pages/               # Application feature pages (Chat, Dashboard)
+│   └── components/          # Reusable UI components
+│
+├── docs/                    # ================= [ PROJECT DOCUMENTATION ] ===============
+│   ├── SRDS.md               # Software Requirements and Design Specification
+│   └── DFD.md               # Data Flow Diagram
+│
+└── notebooks/               # ================= [ R&D (RESEARCH) ] =============
+│   └── ...                  # Jupyter Notebook testing area (Test prompts, chunking)
+
 
 ## Documentation
 
@@ -169,13 +230,6 @@ _The platform requirements can vary depending on the deployment topology._
       cd frontend && uv run streamlit run app.py
       ```
 
-## Contributing
-
-[Choose one of the below options and delete the other]
-
-_Option A (Open Source):_ Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**. Please read [CONTRIBUTING.md](https://www.google.com/search?q=CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
-
-_Option B (Closed/Private):_ This project is currently in early access/private development and is not accepting external contributions at this time.
 
 ## License
 
@@ -183,7 +237,4 @@ Distributed under the **[License Name, e.g., MIT / Apache 2.0]** License. See `L
 
 ----
 
-<div align="center">
-[Back to Top](#top)
-
-</div>
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
