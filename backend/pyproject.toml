@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "awun0105", email = "anhquanlam2002@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.135.3",
     "langchain-openai>=1.1.12",
