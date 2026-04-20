@@ -3,12 +3,14 @@
 ## Project: Mental Health AI Platform
 
    Version: 1.0
-   Prepared by: Lam Quang Anh Quan
+
+   Prepared by: awun0105
+
    Date: 19/4/2026
 
    ---
 
-## 1. Project Overview
+## 1. System Overview
 
 ### 1.1 Product Perspective & Context
 
@@ -77,54 +79,113 @@ Satisfying these stakeholders validates the technical excellence and commercial 
 
 ## 2. System Requirements
 
-💬 _Specifies the verifiable requirements of the software product (The "What")._
+This section specifies the verifiable functional and non-functional requirements of the Mental Health AI Platform.
 
 ### 2.1 Non-Functional Requirements (QoS)
 
-💬 _Quality attributes constraining functional behavior._
+**Performance & Scalability**
 
-➥ **Instructions:** Keep it brief and realistic for a 1-week project.
+- API response time (Time-to-First-Token) for chat interactions shall not exceed 3 seconds under normal load.
+- The system shall support concurrent usage by at least 200 active users (patients and doctors) with graceful degradation.
+- The RAG retrieval pipeline shall maintain sub-second latency even when the DSM-5 knowledge base grows significantly.
 
-Example:
+**Security & Data Privacy (Healthcare Compliance)**
 
-- **Performance:** API response time (Time-to-first-token) should be under 3 seconds.
-- **Security:** API keys and Database URIs must be injected via environment variables (`.env`). Passwords must not be logged in plain text.
+- All sensitive mental health data (chat history, clinical profiles, health scores) must be encrypted both at rest and in transit (TLS 1.3+).
+- User authentication and session management shall follow secure practices (JWT with short expiry, refresh tokens, and secure HTTP-only cookies).
+- The platform shall enforce strict data isolation between patients and doctors; doctors can only access patient data after explicit consent or system-mediated forwarding.
+- Compliance with personal data protection regulations and healthcare data handling best practices (inspired by HIPAA principles and Vietnamese personal data protection laws).
+
+**Reliability & Fault Tolerance**
+
+- The system shall implement graceful error handling and retry mechanisms for external services (OpenAI API, vector database).
+- Critical components (chat service, profile analysis) shall include circuit breakers and fallback strategies to ensure continuous availability.
+- All AI-generated clinical profiles shall include traceability (audit logs) for medical review.
+
+**Observability & LLMOps**
+
+- All LLM calls, RAG retrievals, and agent workflows shall be fully traced and logged using Langfuse (or equivalent observability platform).
+- Token usage, latency, cost per session, and retrieval quality metrics shall be monitored in real-time with alerting thresholds.
+- The platform shall support A/B testing and continuous evaluation of different prompt strategies and model versions.
+
+**Usability & Accessibility**
+
+- The patient interface shall be intuitive, empathetic in tone, and accessible on both desktop and mobile devices.
+- The doctor dashboard shall provide a professional, efficient workspace optimized for clinical decision-making with minimal cognitive load.
+- The entire application shall support Vietnamese as the primary language with clear, natural, and culturally appropriate communication.
 
 ### 2.2 Functional Requirements
 
-💬 _Externally observable behaviors of the system._
+**REQ-FUNC-001**
+**Feature:** User Authentication & Role-Based Access Control
+**Statement:** The system shall support secure registration, login, and Role-Based Access Control (RBAC) to differentiate between Patient and Medical Professional roles.
+**Acceptance Criteria:**
 
-➥ **Instructions:** List the core features using the REQ template below. Focus on Auth, Chat, RAG Search, and Health Scoring.
+- Patients can only access chat and personal health tracking.
+- Doctors can access the Clinical Dashboard, patient profiles, and AI-generated analyses.
+- Session management shall automatically route users to the correct interface based on role.
 
-**Format:**
+**REQ-FUNC-002**
+**Feature:** Empathetic 24/7 Patient Chat Interface
+**Statement:** The system shall provide a private, secure conversational interface where patients can chat 24/7 with an AI Agent acting as an empathetic listener.
+**Acceptance Criteria:**
 
-- **ID:** REQ-FUNC-[001]
-- **Feature:** [Feature Name]
-- **Statement:** The system shall...
-- **Acceptance Criteria:** How to verify it works.
+- The AI shall use open-ended questions and maintain a warm, supportive tone.
+- The interface shall support continuous conversation with memory of previous sessions.
 
-_(Example)_
+**REQ-FUNC-003**
+**Feature:** Silent Symptom Analysis & Profile Generation
+**Statement:** The system shall silently analyze the entire chat history to detect symptoms and generate a structured clinical profile without displaying any diagnosis directly to the patient.
+**Acceptance Criteria:**
 
-- **ID:** REQ-FUNC-001
-- **Feature:** Agentic Chat Interface
-- **Statement:** The system shall allow users to chat with an AI Agent that can autonomously decide when to ask follow-up questions and when to provide a DSM-5 based diagnosis.
+- The profile shall be forwarded automatically to the assigned doctor.
+- Patients shall have an optional view of the AI-generated clinical assessment after the session ends.
+
+**REQ-FUNC-004**
+**Feature:** Psychological First Aid & Coping Exercises
+**Statement:** The system shall provide immediate, DSM-5-grounded soothing advice and simple psychological coping exercises during patient conversations.
+**Acceptance Criteria:**
+
+- All advice and exercises must be retrieved via RAG from the DSM-5 knowledge base.
+- Responses shall never include direct diagnostic statements.
+
+**REQ-FUNC-005**
+**Feature:** Professional Clinical Dashboard for Doctors
+**Statement:** The system shall provide doctors with a comprehensive Clinical Dashboard displaying patient profiles, AI-synthesized symptom summaries, and preliminary clinical insights.
+**Acceptance Criteria:**
+
+- Doctors can review full conversation history and AI-generated profiles.
+- Dashboard shall support search and filtering of assigned patients.
+
+**REQ-FUNC-006**
+**Feature:** Academic Copilot & DSM-5 Cross-Referencing
+**Statement:** The system shall allow doctors to query the AI Assistant to cross-reference DSM-5 diagnostic criteria with specific patient profiles and conversation data.
+**Acceptance Criteria:**
+
+- The AI shall function as an intelligent academic copilot using RAG over the DSM-5 Vietnamese manual.
+- All responses shall clearly indicate they are supportive tools, not final diagnoses.
+
+**REQ-FUNC-007**
+**Feature:** Health Scoring & Progress Tracking
+**Statement:** The system shall calculate and track a mental health score (tốt/khá/trung bình/kém) based on conversation analysis and store historical trends for both patients and doctors.
+**Acceptance Criteria:**
+
+- Scores shall be stored securely and visible in the patient’s health tracking section and doctor’s dashboard.
 
 ### 2.3 AI/ML Specific Requirements
 
-   💬 _Requirements unique to the LLM and RAG components._
+- **LLM Models:** Text generation shall use `gpt-4o-mini` (or equivalent high-performance model) with configurable temperature for balanced creativity and factual accuracy.
+- **Embedding Models:** Text embeddings shall use `text-embedding-3-small` (or equivalent) for high-quality vector representation of DSM-5 content and chat history.
+- **RAG Configuration:** The system shall implement a robust RAG pipeline using LlamaIndex, with vector storage in Qdrant. Retrieval shall prioritize relevance and recency of chat context when applicable.
+- **Safety & Guardrails:**
+  - The Agent must refuse to answer queries unrelated to mental health support.
+  - The Agent must detect and respond appropriately to suicidal ideation or crisis situations with clear warning messages and suggested professional help.
+  - No direct diagnosis shall ever be presented to patients in the chat interface.
+- **Data Isolation & Privacy:** Patient chat data and clinical profiles shall be strictly isolated. AI analysis shall run in a secure backend process with minimal data exposure.
+- **Hallucination Prevention:** All clinical reasoning and advice must be grounded in retrieved DSM-5 context. If insufficient relevant context is found, the system shall explicitly state limitations and avoid speculation.
+- **Agent Orchestration:** Multi-agent workflows shall be implemented using LangGraph to manage conversation flow, symptom analysis, profile generation, and doctor assistance tasks with clear state management.
 
-   ➥ **Instructions:** Specify models, guardrails, and data isolation.
-
-Example:
-
-- **LLM Models:** Text generation using `gpt-4o-mini`
-- **Embedding models:** embeddings using `text-embedding-3-small`.
-- **RAG Configuration:** ...
-- **Safety & Guardrails:** The Agent MUST refuse to answer queries unrelated to mental health. The Agent MUST output a warning if suicidal intent is detected.
-- **Data Isolation & Privacy:** ...
-- **Hallucination Prevention:** The Agent must strictly rely on the retrieved DSM-5 context. If no context matches, it must state it cannot diagnose the issue.
-
-   ---
+---
 
 ## 3. System Architecture & Design
 
