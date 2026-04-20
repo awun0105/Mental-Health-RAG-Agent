@@ -3,7 +3,7 @@ name = "mental-health-rag-agent"
 version = "0.1.0"
 description = "Hệ thống hỗ trợ sức khỏe tâm thần sử dụng RAG và Multi-Agent"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 
@@ -13,6 +13,8 @@ members = ["backend", "frontend"]
 
 [dependency-groups]
 dev = [
+    "mypy>=1.20.1",
+    "pre-commit>=4.5.1",
     "ruff>=0.15.10",
 ]
 
@@ -35,3 +37,14 @@ ignore = []
 quote-style = "double"
 # Dùng space thay vì tab
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true                   # Bật chế độ kiểm tra nghiêm ngặt nhất
+ignore_missing_imports = true   # Bỏ qua lỗi nếu các thư viện bên ngoài không có type hints
+warn_return_any = true          # Cảnh báo nếu hàm không khai báo kiểu trả về
+warn_unused_ignores = true      # Cảnh báo nếu dùng # type: ignore thừa thãi
+exclude = [
+    "tests",
+    ".venv",
+]
