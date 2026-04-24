@@ -5,7 +5,7 @@
 .env
 .env.*
 !.env.example
-
+.archive
 # ==========================================
 # 2. Bộ nhớ đệm (Cache) của Python & Công cụ
 # ==========================================
@@ -47,3 +47,6 @@ backend/data/raw/*
 backend/data/processed/*
 !backend/data/raw/.gitkeep
 !backend/data/processed/.gitkeep
+
+GEMINI.md
+MASTER_PLAN.md
