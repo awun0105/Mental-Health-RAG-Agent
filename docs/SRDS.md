@@ -150,6 +150,9 @@ Their primary needs are:
 - Structured patient summaries.
 - Symptom timelines and extracted evidence snippets.
 - Differential diagnosis support grounded in DSM-5.
+- A conversational AI copilot that can answer questions about an assigned patient's generated
+  profile, generated clinical report, evidence snippets, stress / risk score, and relevant
+  clinical knowledge retrieved from the knowledge base.
 - Risk flags and crisis indicators.
 - Patient stress / risk score trends.
 - Searchable and filterable clinical dashboard.
@@ -260,17 +263,29 @@ knowledge base.
 - The system flags red flags and urgent risk indicators.
 - The system never exposes differential diagnosis content to the patient-facing interface.
 
-### REQ-FUNC-007: Doctor Academic Copilot
+### REQ-FUNC-007: Doctor Conversational Clinical Copilot
 
-The system shall allow doctors to ask clinical questions about a patient profile and relevant
-DSM-5 criteria.
+The system shall allow doctors to chat with an AI copilot about assigned patient profiles,
+generated clinical reports, evidence snippets, stress / risk scores, and clinical knowledge
+retrieved from the DSM-5 and treatment knowledge bases.
 
 **Acceptance criteria**
 
-- The doctor can ask follow-up questions about symptoms, criteria, risk factors, or evidence.
-- Responses are grounded in DSM-5 and patient profile data.
-- The system cites retrieved knowledge base chunks.
+- The doctor can ask follow-up questions about an assigned patient's generated profile or
+  report, including symptoms, risk markers, extracted evidence, timeline, and stress / risk
+  score interpretation.
+- The doctor can ask general clinical knowledge questions against the extracted knowledge base
+  without selecting a specific patient profile.
+- The copilot supports two explicit modes: patient-context mode and clinical-knowledge mode.
+- Patient-context answers are grounded in the selected patient profile, generated report,
+  evidence snippets, and relevant DSM-5 or treatment knowledge base chunks.
+- Clinical-knowledge answers are grounded only in the curated knowledge base and must not
+  include patient-specific information.
+- Responses cite whether the answer is based on patient profile data, generated report data,
+  retrieved knowledge base chunks, or a combination of those sources.
 - The system states limitations when evidence is incomplete.
+- The copilot enforces doctor-patient assignment rules and cannot answer questions about
+  unassigned patients.
 - The copilot does not modify patient records without explicit doctor action.
 
 ### REQ-FUNC-008: Session-Based Stress / Risk Scoring
@@ -561,7 +576,7 @@ FastAPI Backend
         |       +--> Patient Empathetic Agent
         |       +--> Silent Clinical Analyzer
         |       +--> DSM-5 Retrieval Agent
-        |       +--> Doctor Academic Copilot
+        |       +--> Doctor Conversational Clinical Copilot
         |
         +--> LlamaIndex RAG Service
         |       |
@@ -595,7 +610,7 @@ FastAPI Backend
 | Treatment RAG Agent | Retrieves coping guidance and psychological first-aid content. | Patient-facing through safe response |
 | Silent Clinical Analyzer | Summarizes symptoms and risk indicators after session closure. | Doctor-facing only |
 | DSM-5 Retrieval Agent | Retrieves DSM-5 criteria and evidence for clinical reasoning. | Doctor-facing only |
-| Doctor Academic Copilot | Answers doctor questions with citations and uncertainty notes. | Doctor-facing |
+| Doctor Conversational Clinical Copilot | Lets doctors chat about assigned patient profiles, generated reports, and clinical knowledge base content with citations and uncertainty notes. | Doctor-facing |
 | Audit / Trace Node | Records workflow metadata, prompts, retrieval, and outputs. | Internal |
 
 ### 8.3 Knowledge Base Separation
@@ -672,15 +687,23 @@ Separation can be implemented with different Qdrant collections or strict metada
 6. The assigned doctor is notified or the profile appears in the dashboard queue.
 7. The patient sees only a simplified session trend update.
 
-### 10.3 Doctor Differential Diagnosis Flow
+### 10.3 Doctor Conversational Copilot Flow
 
 1. Doctor opens an assigned patient profile.
-2. Doctor requests differential diagnosis support or asks a clinical question.
-3. LangGraph routes the request to the Doctor Academic Copilot.
-4. LlamaIndex retrieves DSM-5 evidence from Qdrant.
-5. The LLM generates a decision-support response with citations and uncertainty notes.
-6. The response states that it is not a final diagnosis.
-7. The action is audit-logged and traced in Langfuse.
+2. Doctor asks a question about the generated patient profile, generated clinical report,
+   evidence snippets, stress / risk score, or relevant clinical knowledge.
+3. The backend verifies that the doctor is authorized to access the selected patient profile.
+4. LangGraph routes the request to the Doctor Conversational Clinical Copilot.
+5. If the question is patient-specific, the copilot loads the generated profile, report data,
+   evidence snippets, and stress / risk score before retrieval.
+6. If the question is general clinical knowledge, the copilot uses only the curated knowledge
+   base without loading patient-specific data.
+7. LlamaIndex retrieves DSM-5 or treatment knowledge base evidence from Qdrant.
+8. The LLM generates a decision-support response with citations, uncertainty notes, and source
+   classification.
+9. If differential diagnosis support is included, the response states that it is not a final
+   diagnosis.
+10. The action is audit-logged and traced in Langfuse.
 
 ### 10.4 Knowledge Ingestion Flow
 
@@ -883,7 +906,7 @@ guardrail flow.
 - Implement Patient Empathetic Agent.
 - Implement Silent Clinical Analyzer.
 - Implement DSM-5 Retrieval Agent.
-- Implement Doctor Academic Copilot.
+- Implement Doctor Conversational Clinical Copilot.
 
 ### Milestone 5: UI Workflows
 
