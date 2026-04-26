@@ -50,4 +50,7 @@ backend/data/processed/*
 !backend/data/processed/.gitkeep
 
 GEMINI.md
-.plan
+.plan/
+!.plan/MASTER_PLAN.md
+#!.plan/MILESTONE1.md
+!.plan/MILESTONE2.md
