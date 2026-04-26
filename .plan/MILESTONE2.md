@@ -309,6 +309,7 @@ class AuditAction(str, Enum):
     DOCTOR_COPILOT_QUERY = "doctor_copilot_query"
     ASSIGNMENT_CREATED = "assignment_created"
     ASSIGNMENT_REMOVED = "assignment_removed"
+    ASSIGNMENT_DEACTIVATED = "assignment_deactivated"
     ADMIN_CONFIG_CHANGED = "admin_config_changed"
 ```
 
@@ -913,6 +914,9 @@ class AuthService:
         if raw_user is None:
             raise InvalidCredentialsError()
 
+        if raw_user.get("password_hash") is None:
+            raise InvalidCredentialsError()
+
         if not pwd_context.verify(password, raw_user["password_hash"]):
             raise InvalidCredentialsError()
 
@@ -1002,22 +1006,28 @@ class AuthService:
         })
         return response.url
 
-    async def handle_google_callback(self, code: str) -> TokenResponse:
+    async def handle_google_callback(self, code: str) -> tuple[str, str]:
         """Xử lý callback từ Supabase sau khi user đăng nhập Google thành công.
 
+        Thay vì trả JWT trực tiếp qua URL (security risk), method này trả về
+        một short-lived one-time authorization code. Frontend sẽ dùng code này
+        để exchange lấy JWT qua POST /auth/google/exchange (không qua URL params).
+
         Flow:
-        1. Exchange authorization code cho Supabase session
+        1. Exchange Supabase authorization code cho Supabase session
         2. Extract user info (email, full_name, avatar_url) từ user_metadata
         3. Tìm user hiện có bằng provider_user_id, hoặc bằng email (link accounts),
            hoặc tạo user mới
         4. Issue app JWT token
         5. Audit log
+        6. Lưu token vào in-memory store với short-lived auth code
+        7. Trả về (auth_code, user_name) để redirect
 
         Args:
             code: Authorization code từ Supabase redirect.
 
         Returns:
-            TokenResponse với access_token và user data.
+            Tuple (auth_code, user_name) — auth_code dùng để exchange lấy JWT.
         """
         # 1. Exchange code for Supabase session
         session_response = self._supabase.auth.exchange_code_for_session({
@@ -1081,8 +1091,52 @@ class AuthService:
             metadata={"method": "google"},
         )
 
-        return TokenResponse(access_token=token, user=user)
+        # 6. Lưu token vào in-memory store với short-lived auth code
+        import secrets
+        auth_code = secrets.token_urlsafe(32)
+        self._pending_tokens[auth_code] = TokenResponse(access_token=token, user=user)
+
+        # 7. Trả về auth_code + user_name
+        user_name = user.full_name if isinstance(user.full_name, str) else str(user.full_name)
+        return (auth_code, user_name)
+
+    def exchange_auth_code(self, auth_code: str) -> TokenResponse:
+        """Exchange short-lived auth code lấy JWT token.
+
+        Auth code chỉ dùng được 1 lần (one-time use). Sau khi exchange,
+        code bị xóa khỏi store.
+
+        Args:
+            auth_code: One-time authorization code từ Google callback redirect.
+
+        Returns:
+            TokenResponse với JWT access_token và user data.
+
+        Raises:
+            UnauthorizedError: Nếu auth_code không hợp lệ hoặc đã hết hạn.
+        """
+        token_response = self._pending_tokens.pop(auth_code, None)
+        if token_response is None:
+            raise UnauthorizedError("Invalid or expired authorization code")
+        return token_response
 ```
+
+**Lưu ý:** Cần thêm `_pending_tokens` dict vào `__init__`:
+
+```python
+    def __init__(
+        self,
+        user_repo: UserRepository,
+        audit_service: AuditService,
+        supabase: Client,
+    ) -> None:
+        self._user_repo = user_repo
+        self._audit_service = audit_service
+        self._supabase = supabase
+        self._pending_tokens: dict[str, TokenResponse] = {}
+```
+
+> **Security note:** `_pending_tokens` là in-memory dict, chỉ phù hợp cho single-instance deployment. Trong production multi-instance, nên dùng Redis với TTL (ví dụ 60 giây) thay thế.
 
 ---
 
@@ -1727,18 +1781,33 @@ async def google_callback(
 
     Flow:
     1. Nhận `code` query param từ Supabase redirect
-    2. Gọi auth_service.handle_google_callback(code) để exchange code,
-       find/create user, issue JWT
-    3. Redirect về frontend với access_token và user_name trong query params
+    2. Gọi auth_service.handle_google_callback(code) để find/create user, issue JWT,
+       và lưu vào in-memory store với short-lived auth code
+    3. Redirect về frontend với auth_code (KHÔNG phải JWT) trong query params
+    4. Frontend sẽ POST auth_code đến /auth/google/exchange để lấy JWT
 
-    Frontend sẽ đọc query params để lưu token vào session state.
+    Lý do: Không truyền JWT qua URL query params vì security risk
+    (browser history, server logs, Referer headers).
     """
-    token_response = await auth_service.handle_google_callback(code)
+    auth_code, user_name = await auth_service.handle_google_callback(code)
     params = urlencode({
-        "access_token": token_response.access_token,
-        "user_name": token_response.user.full_name,
+        "auth_code": auth_code,
+        "user_name": user_name,
     })
     return RedirectResponse(url=f"{settings.frontend_url}?{params}")
+
+
+@router.post("/google/exchange", response_model=TokenResponse)
+async def google_exchange(
+    auth_code: str = Query(..., description="One-time auth code từ Google callback"),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> TokenResponse:
+    """Exchange short-lived auth code lấy JWT access token.
+
+    Auth code chỉ dùng được 1 lần. Endpoint này được frontend gọi
+    sau khi nhận auth_code từ Google callback redirect.
+    """
+    return auth_service.exchange_auth_code(auth_code)
 ```
 
 ---
@@ -1788,7 +1857,7 @@ async def consent_status(
         - latest_consent: ConsentResponse | None — their most recent consent record
     """
     current_version = settings.current_consent_policy_version
-    has_accepted = await consent_service.has_accepted_current(
+    has_accepted = await consent_service.has_valid_consent(
         user_id=current_user.id,
     )
     latest = await consent_service.get_latest_consent(
@@ -1978,7 +2047,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     - Shutdown: Cleanup (Supabase client doesn't need explicit close)
     """
     # --- Startup ---
-    app.state.supabase = create_supabase_client()
+    from app.core.config import settings
+    app.state.supabase = create_supabase_client(settings)
     yield
     # --- Shutdown ---
     # Supabase Python client doesn't require explicit cleanup.
@@ -2458,7 +2528,7 @@ class TestConsentService:
         assert result.policy_version == "1.0"
         assert result.user_id == "user-123"
 
-    async def test_has_accepted_current(
+    async def test_has_valid_consent(
         self, consent_service: ConsentService, mock_supabase: MagicMock
     ) -> None:
         """Should return True if user accepted current policy version."""
@@ -2466,7 +2536,7 @@ class TestConsentService:
             {"id": "consent-id-1"}
         ]
 
-        result = await consent_service.has_accepted_current(user_id="user-123")
+        result = await consent_service.has_valid_consent(user_id="user-123")
         assert result is True
 
     async def test_has_not_accepted(
@@ -2475,7 +2545,7 @@ class TestConsentService:
         """Should return False if user has not accepted current policy version."""
         mock_supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
 
-        result = await consent_service.has_accepted_current(user_id="user-123")
+        result = await consent_service.has_valid_consent(user_id="user-123")
         assert result is False
 
     async def test_get_latest_consent_exists(
@@ -2736,7 +2806,7 @@ class TestAuditCoverage:
             "CONSENT_ACCEPTED",
             "ADMIN_CONFIG_CHANGE",
             "DOCTOR_ASSIGNMENT_CREATED",
-            "DOCTOR_ASSIGNMENT_DEACTIVATED",
+            "ASSIGNMENT_DEACTIVATED",
         ]
         for action_name in required_actions:
             assert hasattr(AuditAction, action_name), (
@@ -3060,12 +3130,26 @@ BACKEND_URL = settings.backend_url
 
 
 # ─── Handle OAuth Callback ──────────────────────────────────────────────────
-# Khi Supabase redirect về frontend với ?access_token=...&user_name=...,
-# đọc query params và lưu vào session state.
+# Khi Google callback redirect về frontend với ?auth_code=...&user_name=...,
+# exchange auth_code lấy JWT access_token qua POST /auth/google/exchange.
+# Lý do: Không truyền JWT trực tiếp qua URL vì security risk (browser history,
+# server logs, Referer headers). Auth code chỉ dùng được 1 lần.
 query_params = st.query_params
-if "access_token" in query_params:
-    st.session_state["access_token"] = query_params["access_token"]
-    st.session_state["user_name"] = query_params.get("user_name", "User")
+if "auth_code" in query_params:
+    try:
+        resp = requests.post(
+            f"{BACKEND_URL}/api/v1/auth/google/exchange",
+            params={"auth_code": query_params["auth_code"]},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            st.session_state["access_token"] = data["access_token"]
+            st.session_state["user_name"] = query_params.get("user_name", data["user"]["full_name"])
+        else:
+            st.error("Đăng nhập Google thất bại. Vui lòng thử lại.")
+    except requests.exceptions.ConnectionError:
+        st.error("Không thể kết nối đến server.")
     st.query_params.clear()  # Xóa query params khỏi URL
 
 
@@ -3144,7 +3228,7 @@ else:
 ```
 
 **Giải thích:**
-- **OAuth callback handling:** Khi Supabase hoàn tất Google login, backend redirect về frontend với `?access_token=...&user_name=...`. Streamlit đọc `st.query_params` để lưu token.
+- **OAuth callback handling:** Khi Supabase hoàn tất Google login, backend redirect về frontend với `?auth_code=...&user_name=...` (short-lived one-time code, KHÔNG phải JWT). Frontend gọi `POST /api/v1/auth/google/exchange` để exchange auth code lấy JWT — tránh expose token trong URL (browser history, server logs, Referer headers).
 - **2 cột login:** Email/Password (trái) + Google OAuth (phải) — user chọn 1 trong 2 cách.
 - **Google button:** Gọi `GET /api/v1/auth/google` để lấy OAuth URL, rồi dùng `meta refresh` để redirect user đến Google.
 - **Logout:** Xóa `access_token` khỏi `st.session_state` và rerun app.
