@@ -823,7 +823,7 @@ Service xử lý register, login, JWT token creation, và **Google OAuth** (đă
 ```python
 # backend/app/services/auth_service.py
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, ClassVar
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -852,6 +852,12 @@ class AuthService:
     UserRepository for data access, AuditService for logging, and
     Supabase Client for Google OAuth flow.
     """
+
+    # Class-level store cho short-lived auth codes (shared across all instances).
+    # Cần thiết vì FastAPI DI tạo AuthService instance mới cho mỗi request,
+    # nên instance-level dict sẽ bị mất giữa callback và exchange requests.
+    # Production multi-instance: thay bằng Redis với TTL.
+    _pending_tokens: ClassVar[dict[str, TokenResponse]] = {}
 
     def __init__(
         self,
@@ -1094,7 +1100,7 @@ class AuthService:
         # 6. Lưu token vào in-memory store với short-lived auth code
         import secrets
         auth_code = secrets.token_urlsafe(32)
-        self._pending_tokens[auth_code] = TokenResponse(access_token=token, user=user)
+        AuthService._pending_tokens[auth_code] = TokenResponse(access_token=token, user=user)
 
         # 7. Trả về auth_code + user_name
         user_name = user.full_name if isinstance(user.full_name, str) else str(user.full_name)
@@ -1115,27 +1121,14 @@ class AuthService:
         Raises:
             UnauthorizedError: Nếu auth_code không hợp lệ hoặc đã hết hạn.
         """
-        token_response = self._pending_tokens.pop(auth_code, None)
+        token_response = AuthService._pending_tokens.pop(auth_code, None)
         if token_response is None:
             raise UnauthorizedError("Invalid or expired authorization code")
         return token_response
 ```
 
-**Lưu ý:** Cần thêm `_pending_tokens` dict vào `__init__`:
-
-```python
-    def __init__(
-        self,
-        user_repo: UserRepository,
-        audit_service: AuditService,
-        supabase: Client,
-    ) -> None:
-        self._user_repo = user_repo
-        self._audit_service = audit_service
-        self._supabase = supabase
-        self._pending_tokens: dict[str, TokenResponse] = {}
-```
-
+> **Lưu ý:** `_pending_tokens` là **class-level variable** (`ClassVar`), KHÔNG phải instance-level. Điều này cần thiết vì `get_auth_service` trong `dependencies.py` tạo `AuthService` instance mới cho mỗi request (FastAPI DI). Nếu dùng `self._pending_tokens` (instance-level), auth code sẽ bị mất giữa callback request và exchange request (2 instance khác nhau). Class-level dict được shared giữa tất cả instances.
+>
 > **Security note:** `_pending_tokens` là in-memory dict, chỉ phù hợp cho single-instance deployment. Trong production multi-instance, nên dùng Redis với TTL (ví dụ 60 giây) thay thế.
 
 ---
