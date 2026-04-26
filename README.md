@@ -1,20 +1,8 @@
 <a id="readme-top"></a>
 
-# Mental-Health-RAG-Agent
+# Mental-Health-Sovereign-Agentic-AI-Platform
 
-A mental health support system utilizing Retrieval-Augmented Generation (RAG) to combine the reasoning power of large language models (LLMs) with accurate medical data (like the DSM-5). The system employs a Multi-Agent architecture to ensure accuracy, safety, and personalization during consultations.
-
-<div align="center">
-  
-[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-
-[![Docker](https://img.shields.io/badge/Docker-Required-blue.svg)](https://www.docker.com/)
-
-[![GitHub Stars](https://img.shields.io/github/stars/NVIDIA-AI-Blueprints/retail-shopping-assistant?style=social)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/stargazers)
-
-[![GitHub last commit](https://img.shields.io/github/last-commit/NVIDIA-AI-Blueprints/retail-shopping-assistant)](https://github.com/NVIDIA-AI-Blueprints/retail-shopping-assistant/commits)
-
-</div>
+A privacy-first, human-in-the-loop AI platform for mental health support. The system uses RAG and multi-agent orchestration to provide safe patient support and clinically grounded decision support for doctors.
 
 ## Table of Contents
 - [Overview](#overview)
@@ -30,210 +18,230 @@ A mental health support system utilizing Retrieval-Augmented Generation (RAG) to
 - [License](#license)
 
 ## Overview
-This repository contains the source code and configuration for **Mental-Health-RAG-Agent**. It showcases how to build and deploy **a safe psychological consultation system** using **FastAPI, Streamlit, LangGraph, Qdrant (Vector DB), and Supabase**.
+This repository contains the source code and documentation for **Mental-Health-Sovereign-Agentic-AI-Platform**.
 
-By utilizing this project, developers can **build complex AI conversation flows with long-term memory and deep document retrieval capabilities**, unlocking new application possibilities in **the Digital Healthcare domain**.
+The platform is designed for two main experiences:
+
+- **Patients:** a safe, empathetic chat experience for psychological first-aid, coping guidance, and crisis escalation. The AI must not directly diagnose patients.
+- **Doctors / Counselors:** a clinical workspace where doctors can review generated patient profiles, inspect evidence snippets, ask the AI about a patient report, and query clinical knowledge from the curated knowledge base.
+
+The long-term goal is a sovereign AI system that can run in private infrastructure so sensitive mental health data stays under organizational control.
 
 ## Key Features
 
-- **Multi-Agent Orchestration (LangGraph)** — Orchestrates specialized agents (e.g., Symptom Collection Agent, DSM-5 Retrieval Agent, Safety Check Agent).
-- **Dual-Database Architecture** — Clear separation between the "Knowledge Library" (Qdrant Vector DB) and the "Patient Record/State" (Supabase PostgreSQL).
-- **Decoupled Application** — Backend (FastAPI) and Frontend (Streamlit) operate independently, communicating via REST APIs.
-- **Lightning-Fast Monorepo Setup** — Superfast management of the entire workspace and dependencies using `uv`, avoiding Dependency Hell.
-- **Modular Ingestion Pipeline** — Independent RAG data ingestion script (Load -> Split -> Embed -> Qdrant), making it easy to update new documents.
-- **[Feature Name 6, e.g., Deployment options]** — [Detailed description of the feature, e.g., Deployment assets for docker compose as well as helm deployment.]
+- **Multi-Agent Orchestration:** LangGraph coordinates patient support, safety guardrails, silent clinical analysis, DSM-5 retrieval, and doctor copilot workflows.
+- **RAG Grounding:** LlamaIndex retrieves evidence from curated DSM-5 and treatment knowledge bases.
+- **Dual-Database Design:** Qdrant stores vector knowledge; Supabase/PostgreSQL stores users, sessions, clinical profiles, scores, consent records, and audit logs.
+- **Doctor Conversational Copilot:** Doctors can chat with AI about assigned patient profiles, generated reports, evidence snippets, risk scores, or general clinical knowledge.
+- **Patient Safety Guardrails:** Crisis detection and no-direct-diagnosis policies protect patient-facing conversations.
+- **Audit and Observability:** Langfuse traces prompts, retrieval, model outputs, latency, and cost.
+- **uv Workspace:** Backend and frontend dependencies are managed in one Python workspace.
 
 ## Use Case / Problem Description
 
-The **[Project Name]** addresses the challenge of **[Describe the core problem, e.g., interacting with massive volumes of unstructured data]**. 
+Mental health data is highly sensitive, and clinical AI workflows must be safe, explainable, and controlled. This project addresses that challenge by combining:
 
-This solution can be applied to a multitude of use cases such as:
-* **[Use Case 1, e.g., Smart space monitoring]**
-* **[Use Case 2, e.g., Automated reporting]**
-* **[Use Case 3, e.g., Anomaly detection]**
-
-This is crucial for environments where **[Explain why this matters, e.g., quick and accurate analysis leads to better operational efficiency]**.
-
+- Private mental health chat support for patients.
+- Doctor-facing summaries and clinical decision support.
+- RAG grounded in curated medical knowledge.
+- Human-in-the-loop design so doctors retain final clinical authority.
+- A roadmap toward self-hosted, privacy-first deployment.
 
 ## Software Components
 
-1. **Core AI / Agents**: LangGraph (State/Flow management), LangChain, and LLMs (such as OpenAI GPT-4o / Text-Embedding-3-small).
-2. **Vector Database (Stateless)**: Qdrant, used for storing and performing Semantic Search on medical documents.
-3. **Relational Database (Stateful)**: Supabase (PostgreSQL), used for storing user information, chat history, and acting as a Checkpointer for LangGraph.
-4. **Backend API**: FastAPI provides high-speed internal communication endpoints.
-5. **User Interface**: Streamlit builds the interactive Chat/Dashboard interface for end-users.
+1. **Backend API:** FastAPI service for health checks, future chat APIs, agent workflows, and RAG endpoints.
+2. **Frontend UI:** Streamlit interface for patient and doctor workflows.
+3. **Agent Orchestration:** LangGraph manages stateful multi-agent flows.
+4. **RAG Engine:** LlamaIndex handles document ingestion, indexing, retrieval, and citations.
+5. **Vector Database:** Qdrant stores DSM-5, treatment, and policy knowledge chunks.
+6. **Application Database:** Self-hosted Supabase/PostgreSQL stores users, sessions, patient profiles, doctor assignments, audit logs, and scores.
+7. **LLM Layer:** Provider abstraction starts with configurable hosted LLMs and can later evolve to LiteLLM or self-hosted vLLM.
+8. **Observability:** Langfuse tracks prompts, retrieval context, outputs, cost, and latency.
 
 ## Technical Diagram
 
-The following image represents the architecture and workflow.
+High-level MVP architecture:
 
-<p align="center">
-  <img src="./docs/assets/arch_diagram.png" width="750">
-</p>
+```text
+Streamlit UI
+    |
+    v
+FastAPI Backend
+    |
+    +--> LangGraph Agent Orchestrator
+    |       +--> Safety Guardrail Agent
+    |       +--> Patient Empathetic Agent
+    |       +--> Silent Clinical Analyzer
+    |       +--> DSM-5 Retrieval Agent
+    |       +--> Doctor Conversational Clinical Copilot
+    |
+    +--> LlamaIndex RAG Service --> Qdrant
+    +--> Supabase / PostgreSQL
+    +--> LLM Provider Abstraction
+    +--> Langfuse
+```
 
 ## Workflow
 
-The following is a step-by-step explanation of the workflow from the end-user perspective:
-
-1. **[Step 1 Name, e.g., Data Ingestion]** — [Description of the step, e.g., Multimodal enterprise documents are ingested and processed by the extraction pipeline.]
-2. **[Step 2 Name, e.g., User Query]** — [Description of the step, e.g., The user interacts with the system through the UI or APIs, submitting a request.]
-3. **[Step 3 Name, e.g., Query Processing]** — [Description of the step, e.g., The query is processed by the backend service and converted into embeddings for semantic search.]
-4. **[Step 4 Name, e.g., Retrieval]** — [Description of the step, e.g., The system matches the processed query against enterprise data stored in the vector database.]
-5. **[Step 5 Name, e.g., Response Generation]** — [Description of the step, e.g., The selected context is passed into the inference model to generate a grounded, accurate response.]
+1. **Knowledge Ingestion:** Curated DSM-5 and treatment documents are cleaned, chunked, embedded, and stored in Qdrant.
+2. **Patient Chat:** The patient talks with an empathetic AI agent that provides safe support without direct diagnosis.
+3. **Safety Check:** A guardrail agent detects crisis or self-harm signals and routes to a safety response when needed.
+4. **Silent Clinical Profile:** At session closure, the system generates a doctor-facing profile with symptoms, risk markers, and evidence snippets.
+5. **Doctor Review:** The doctor reviews assigned patient profiles, stress/risk trends, and generated reports.
+6. **Doctor AI Chat:** The doctor asks the copilot about a patient profile/report or general clinical knowledge from the knowledge base.
 
 ## Core Workflows
-We provide multiple reference workflows to demonstrate how individual components interact:
 
 | Workflow Name | Description | Reference / Link |
-|----------|-------------|------------------|
-| **[Workflow 1: e.g., Basic Q&A]** | [Describe what it does, e.g., Retrieval and Q&A on short data clips] | [Link to doc/script] |
-| **[Workflow 2: e.g., Real-Time Alerts]** | [Describe what it does, e.g., Continuous processing for anomaly detection] | [Link to doc/script] |
-| **[Workflow 3]** | [Describe what it does] | [Link to doc/script] |
-
+| --- | --- | --- |
+| Patient Support Chat | Empathetic, non-diagnostic chat grounded in treatment guidance. | `docs/SRDS.md` |
+| Crisis Safety Flow | Detects crisis/self-harm signals and returns safety guidance. | `docs/SRDS.md` |
+| Clinical Profile Generation | Converts a completed patient session into a doctor-facing summary. | `docs/SRDS.md` |
+| Doctor Copilot | Lets doctors ask questions about assigned patient profiles, generated reports, and clinical knowledge. | `docs/SRDS.md` |
+| Knowledge Ingestion | Loads, chunks, embeds, and stores clinical documents in Qdrant. | `docs/SRDS.md` |
 
 ## Target Audience
-This blueprint is designed with multiple configuration options. It is intended for:
 
-1. **[Audience A, e.g., IT Engineers / System Admins]:** Professionals focused on deployment and maintenance. The repository offers easy-to-manage configurations (e.g., Docker Compose).
-2. **[Audience B, e.g., GenAI Developers / ML Engineers]:** Experts who need to customize the pipelines, fine-tune models, or modify processing logic for specific proprietary datasets.
-
+1. **Patients:** People seeking a safe space for emotional support and simple coping guidance.
+2. **Doctors / Counselors:** Professionals who need faster review of patient sessions and clinically grounded AI assistance.
+3. **Developers / AI Engineers:** Builders implementing RAG, multi-agent workflows, safety checks, and clinical data systems.
+4. **Clinic or Organization Admins:** Teams responsible for privacy, deployment, access control, and compliance.
 
 ## Repository Structure Overview
 
 | Directory / File | Description |
 | :--- | :--- |
-| **`Root Workspace/`** | **Global configurations for the `uv` monorepo.** |
-| ├── `pyproject.toml` & `uv.lock` | Workspace configuration and dependency lock files for the entire project. |
-| ├── `.env` & `.env.example` | Environment variables (API keys, DB URLs). `.env` is secure and ignored by Git. |
-| **`backend/`** | **Core System: FastAPI application, LangGraph workflows, and RAG services.** |
-| ├── `app/api/` | RESTful API endpoints (e.g., `/chat`, `/health-scores`) receiving frontend requests. |
-| ├── `app/agents/` | Multi-Agent logic using LangGraph (Agent Nodes, State definitions, Graph compilation). |
-| ├── `app/services/` | Stateless AI services: Qdrant vector database search, OpenAI model integrations. |
-| ├── `app/db/` | Stateful database connections: Supabase/PostgreSQL for user accounts and chat history. |
-| ├── `app/ingestion/` | Standalone data pipelines (e.g., scripts to parse DSM-5 PDFs, embed, and upload to Qdrant). |
-| ├── `app/schemas/` | Pydantic models for strict input/output data validation. |
-| ├── `app/core/` | Application configurations, global constants, and security settings (CORS). |
-| ├── `data/` | Stores static medical documents (`raw/` for original PDFs, `processed/` for cleaned data). |
-| └── `tests/` | Automated testing suite utilizing `pytest` and `pytest-asyncio` to evaluate RAG accuracy. |
-| **`frontend/`** | **User Interface: Interactive Streamlit web application.** |
-| ├── `app.py` | Main entry point and routing for the Streamlit dashboard. |
-| ├── `pages/` | Individual application features (e.g., the Chat interface, Health tracking dashboard). |
-| └── `components/` | Reusable UI widgets and custom visual elements (e.g., chat bubbles, metric cards). |
-| **`docs/`** | **Official Project Documentation (System Blueprints).** |
-| ├── `SRDS.md` | Software Requirements and Design Specification. |
-| └── `DFD.md` | Data Flow Diagrams mapping the exact movement of data from User to Backend. |
-| **`notebooks/`** | **R&D Environment:** Jupyter notebooks for experimenting with chunking strategies and prompts. |
+| **`pyproject.toml` & `uv.lock`** | Root uv workspace configuration and locked dependency graph. |
+| **`.env.example`** | Template for local environment variables. |
+| **`backend/`** | FastAPI backend, LangGraph agents, RAG services, data access, ingestion, and tests. |
+| **`backend/app/api/`** | API routes such as health checks and future chat endpoints. |
+| **`backend/app/agents/`** | LangGraph agent nodes, states, and graph definitions. |
+| **`backend/app/services/`** | RAG, LLM provider, Qdrant, and other service logic. |
+| **`backend/app/db/`** | Supabase/PostgreSQL integration and persistence logic. |
+| **`backend/app/ingestion/`** | Document ingestion pipeline for clinical knowledge sources. |
+| **`backend/data/`** | Raw and processed clinical documents; large files are ignored by Git. |
+| **`frontend/`** | Streamlit frontend application. |
+| **`docs/`** | SRDS, data-flow documentation, and agent architecture documentation. |
+| **`_notes/`** | Project notes, setup history, and development logs. |
 
 ### Project Structure
 
 ```text
-Mental-Health-RAG-Agent/
-├── pyproject.toml           # Root Workspace configuration for uv, linking backend and frontend
-├── uv.lock                  # Common library version lock file for the entire project
-├── .python-version          # Python version automatically managed by uv
-├── .env                     # Contains actual API Keys (Secure - ignored by Git)
-├── .env.example             # Template file containing API Key names for public reference
-├── .gitignore               # Config to ignore junk, hidden, and environment files
-├── README.md                # Project introduction and setup guide
+Mental-Health-Sovereign-Agentic-AI-Platform/
+├── pyproject.toml              # Root uv workspace configuration
+├── uv.lock                     # Locked dependencies
+├── .python-version             # Python version
+├── .env.example                # Environment variable template
+├── Makefile                    # Common setup, run, and check commands
+├── README.md                   # Project overview and quickstart
 │
-├── backend/                 # ================= [ CORE SYSTEM ] =================
-│   ├── pyproject.toml       # Backend-specific library management (FastAPI, LangGraph...)
-│   ├── app/                 # Main backend source code directory
-│   │   ├── api/             # Defines RESTful endpoints (e.g., /chat, /history)
-│   │   ├── core/            # Contains configurations, constants, and security (CORS)
-│   │   ├── agents/          # Contains LangGraph logic (Nodes, State, Graph)
-│   │   ├── services/        # Handles RAG processing, OpenAI model calls, Qdrant queries
-│   │   ├── schemas/         # Defines Pydantic models (Input/output data validation)
-│   │   ├── db/              # Database connection to Supabase (PostgreSQL)
-│   │   ├── ingestion/       # Contains one-way data ingestion pipelines
-│   │   │   └── load_dsm5.py # Reads PDF files, embeds, and uploads to Qdrant
-│   │   └── main.py          # Main entry point to run the FastAPI application
-│   ├── data/                # Stores static medical data
-│   │   ├── raw/             # Contains raw document files (e.g., dsm5_sample.pdf)
-│   │   └── processed/       # Contains data after preprocessing
-│   └── tests/               # Automated testing suite (pytest & pytest-asyncio)
+├── backend/
+│   ├── pyproject.toml          # Backend dependencies
+│   ├── app/
+│   │   ├── api/                # FastAPI routes
+│   │   ├── core/               # Settings and configuration
+│   │   ├── agents/             # LangGraph workflows
+│   │   ├── services/           # RAG, LLM, and external service logic
+│   │   ├── schemas/            # Pydantic models
+│   │   ├── db/                 # Database access
+│   │   ├── ingestion/          # Knowledge ingestion pipeline
+│   │   └── main.py             # FastAPI entrypoint
+│   ├── data/
+│   │   ├── raw/                # Raw clinical documents
+│   │   └── processed/          # Processed document artifacts
+│   └── tests/                  # Backend tests
 │
-├── frontend/                # ================= [ USER INTERFACE ] =================
-│   ├── pyproject.toml       # Frontend-specific library management (Streamlit, Plotly...)
-│   ├── app.py               # Main entry point for the Streamlit UI
-│   ├── pages/               # Application feature pages (Chat, Dashboard)
-│   └── components/          # Reusable UI components
+├── frontend/
+│   ├── pyproject.toml          # Frontend dependencies
+│   └── main.py                 # Streamlit entrypoint
 │
-├── docs/                    # ================= [ PROJECT DOCUMENTATION ] ===============
-│   ├── SRDS.md               # Software Requirements and Design Specification
-│   └── DFD.md               # Data Flow Diagram
+├── docs/
+│   ├── SRDS.md                 # Requirements and design specification
+│   ├── DFD.md                  # Data flow documentation
+│   └── AGENT.md                # Agent architecture documentation
 │
-└── notebooks/               # ================= [ R&D (RESEARCH) ] =============
-│   └── ...                  # Jupyter Notebook testing area (Test prompts, chunking)
+└── _notes/                     # Project notes and setup logs
 ```
 
 ## Documentation
 
-For detailed instructions, API references, and advanced configurations, please refer to the [Official Documentation](#link-to-docs) or the `docs/` folder.
+- `docs/SRDS.md` — main requirements and design specification.
+- `docs/DFD.md` — data flow documentation.
+- `docs/AGENT.md` — agent architecture and workflow notes.
+- `_notes/[1]setup_process.md` — project setup history and notes.
 
 ## Prerequisites
 
-Before deploying **[Project Name]**, ensure you have the following:
+Before running the project locally, install or prepare:
 
-- **[Requirement 1, e.g., Valid API Keys from Provider X]**
-- **[Requirement 2, e.g., Specific Developer License]**
-- **[Requirement 3, e.g., Access to specific cloud resources]**
+- Python 3.11+
+- `uv`
+- API keys for the selected LLM provider, such as OpenAI or Gemini
+- Qdrant connection settings
+- Supabase/PostgreSQL connection settings
+- Optional: Langfuse keys for tracing
 
 ## Hardware Requirements
 
-_The platform requirements can vary depending on the deployment topology._
+For local development:
 
-- **Minimum Configuration:** [e.g., 16GB RAM, 4 CPU cores]
-- **Recommended Configuration:** [e.g., 32GB RAM, Dedicated GPU with 16GB VRAM]
-- **Supported OS:** [e.g., Ubuntu 22.04 / Windows 11 / macOS]
+- **Minimum:** 8GB RAM, 2 CPU cores
+- **Recommended:** 16GB RAM, 4 CPU cores
+- **Supported OS:** Linux, macOS, or Windows with WSL
+
+For production, requirements depend on deployment size, self-hosted model usage, database size, and traffic.
 
 ## Quickstart Guide
 
 ### Local Deployment (Development Mode with `uv Workspace`)
-**Ideal for:** Superfast local development without needing to build Docker, with centralized package management.
 
 #### Installation Steps:
 
 1. Clone the repository:
     ```bash
-    git clone [https://github.com/your_username/AI-Mental-Health-Agent.git](https://github.com/your_username/AI-Mental-Health-Agent.git)
-    cd AI-Mental-Health-Agent
+    git clone https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform.git
+    cd Mental-Health-Sovereign-Agentic-AI-Platform
     ```
 
-2. Install `uv` (Superfast package manager):
+2. Install `uv`:
     ```bash
-    # MacOS/Linux
-    curl -LsSf [https://astral.sh/uv/install.sh](https://astral.sh/uv/install.sh) | sh
-    
-    # Windows (Powershell)
-    irm [https://astral.sh/uv/install.ps1](https://astral.sh/uv/install.ps1) | iex
+    # macOS/Linux
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Windows PowerShell
+    irm https://astral.sh/uv/install.ps1 | iex
     ```
 
-3. Install the entire environment:
+3. Install the workspace dependencies:
     ```bash
-    uv sync
+    make install
     ```
 
 4. Configure environment variables:
     ```bash
     cp .env.example .env
-    # Edit .env with your credentials (OPENAI_API_KEY, QDRANT_URL, SUPABASE_URL, etc.)
+    # Edit .env with your LLM, Qdrant, Supabase/PostgreSQL, and Langfuse settings.
     ```
 
-5. Launch the system:
-    * **Start Backend:** Open a new terminal in the root directory and type:
-      ```bash
-      cd backend && uv run uvicorn app.main:app --reload
-      ```
-    * **Start Frontend:** Open a second terminal in the root directory and type:
-      ```bash
-      cd frontend && uv run streamlit run app.py
-      ```
+5. Run the backend:
+    ```bash
+    make dev-be
+    ```
 
+6. Run the frontend in another terminal:
+    ```bash
+    make dev-fe
+    ```
+
+7. Run quality checks before committing:
+    ```bash
+    make check
+    uv run pre-commit run --all-files
+    ```
 
 ## License
 
-Distributed under the **[License Name, e.g., MIT / Apache 2.0]** License. See `LICENSE` for more information.
+License information has not been finalized yet.
 
 ----
 
