@@ -28,6 +28,7 @@ htmlcov/
 # ==========================================
 _notes/*.backup
 _notes/temp_*.md
+_notes/[0]project_history.md
 *.md.backup
 
 # ==========================================
