@@ -821,3 +821,45 @@ uv add --dev --package backend pytest            # dev dependency
 
 **Q6: Sau này muốn chuyển sang production database thật thì sao?**
 → Supabase đã là production-ready. Còn Qdrant bạn có thể chuyển sang Qdrant Cloud hoặc self-host với Docker mà không ảnh hưởng kiến trúc.
+
+
+Dưới đây là **Workflow 4 bước "bất tử"** mỗi khi bạn muốn thêm một thư viện mới vào dự án này:
+
+---
+
+### Bước 1: Cài đặt vào Package (Library Installation)
+Bạn phải xác định thư viện đó dùng cho ai (Backend hay Frontend).
+* **Nếu dùng cho Backend:** `uv add --package backend <tên-thư-viện>`
+* **Nếu dùng cho Frontend:** `uv add --package frontend <tên-thư-viện>`
+
+### Bước 2: Cài đặt "Bản đồ kiểu" cho Mypy (Type Stubs)
+Nhiều thư viện Python cũ không có sẵn thông tin kiểu dữ liệu. Để Mypy không báo lỗi `import-untyped`, hãy cài thêm gói `types-*` vào nhóm Dev.
+* **Lệnh:** `uv add --dev types-<tên-thư-viện>`
+* *(Lưu ý: Không phải thư viện nào cũng cần gói này, nếu cài mà báo không tìm thấy thì bỏ qua).*
+
+### Bước 3: Khai báo trong Code (Import)
+Mở file `.py` bạn muốn dùng và viết lệnh `import`.
+* **Ví dụ:** `import requests` hoặc `import pandas as pd`.
+
+### Bước 4: Chạy bộ lọc tự động (The "Make" Chain)
+Sau khi xong 3 bước trên, bạn chạy chuỗi lệnh này để dự án tự "sạch":
+1.  **`make format`**: Để Ruff tự sắp xếp lại các dòng import cho đúng chuẩn.
+2.  **`make check`**: Để Mypy xác nhận bạn đã dùng thư viện đó đúng cách.
+
+---
+
+### Bảng tóm tắt Workflow cho bạn dễ nhớ
+
+| Hành động | Lệnh thực hiện | Mục đích |
+| :--- | :--- | :--- |
+| **Thêm đồ vào kho** | `uv add --package ...` | Để máy có file mà chạy. |
+| **Thêm từ điển** | `uv add --dev types-...` | Để Mypy hiểu thư viện đó là gì. |
+| **Lôi đồ ra dùng** | `import ...` (trong file .py) | Để Python biết bạn cần dùng nó ở file này. |
+| **Kiểm tra lại** | `make format` & `make check` | Để đảm bảo mọi thứ hoàn hảo trước khi lưu (commit). |
+
+---
+
+### Tại sao bạn thấy phức tạp?
+Đó là vì dự án này đang được thiết lập theo tiêu chuẩn **Sovereign Agentic AI** (AI Agent có chủ quyền và tự chủ). Với tiêu chuẩn này:
+* Code phải **cực kỳ rõ ràng** về kiểu dữ liệu (Strict typing).
+* Cấu trúc phải **chia nhỏ** (Modular) để Agent dễ dàng đọc và sửa lỗi cho bạn sau này.
