@@ -20,7 +20,7 @@ resolution-markers = [
 members = [
     "backend",
     "frontend",
-    "mental-health-rag-agent",
+    "mental-health-sovereign-agentic-ai-platform",
 ]
 
 [[package]]
@@ -900,7 +900,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mental-health-rag-agent"
+name = "mental-health-sovereign-agentic-ai-platform"
 version = "0.1.0"
 source = { virtual = "." }
 

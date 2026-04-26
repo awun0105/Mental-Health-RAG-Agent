@@ -1,5 +1,5 @@
 [project]
-name = "mental-health-rag-agent"
+name = "Mental-Health-Sovereign-Agentic-AI-Platform"
 version = "0.1.0"
 description = "Hệ thống hỗ trợ sức khỏe tâm thần sử dụng RAG và Multi-Agent"
 readme = "README.md"
