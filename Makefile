@@ -40,6 +40,7 @@ ingest:
 format:
 	uv run ruff check . --fix
 	uv run ruff format .
+	uv run pre-commit run --all-files
 
 # Check code quality
 check:
