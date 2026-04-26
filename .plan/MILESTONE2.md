@@ -1,7 +1,7 @@
 # Milestone 2 - Data and Auth Foundation
 
 ## Mục tiêu
-Hoàn thành Milestone 2 (Data & Auth Foundation) — thiết lập database schema, Supabase client, Repository pattern, Authentication (JWT), RBAC, Consent tracking, và Audit logging. Sau milestone này, hệ thống có thể register/login users, phân quyền theo role, quản lý doctor-patient assignments, ghi consent, và audit log.
+Hoàn thành Milestone 2 (Data & Auth Foundation) — thiết lập database schema, Supabase client, Repository pattern, Authentication (JWT + Google OAuth), RBAC, Consent tracking, và Audit logging. Sau milestone này, hệ thống có thể register/login users (bao gồm đăng nhập/đăng ký bằng tài khoản Google thông qua Supabase built-in OAuth provider), phân quyền theo role, quản lý doctor-patient assignments, ghi consent, và audit log.
 
 ## Bảng theo dõi tiến độ
 
@@ -37,9 +37,13 @@ Hoàn thành Milestone 2 (Data & Auth Foundation) — thiết lập database sch
 | 2.23 | Cập nhật `.env.example` | ⬜ |
 | 2.24 | Tạo tests cho auth, RBAC, consent, audit | ⬜ |
 | 2.25 | Verify — chạy server + chạy tests + make check | ⬜ |
+| 2.26 | Cập nhật `frontend/main.py` — Google OAuth + Email/Password login UI | ⬜ |
+| 2.27 | Setup Google OAuth bên ngoài code (Google Cloud Console + Supabase Dashboard) | ⬜ |
 
 
 Khi hoàn thành mỗi task, đổi ⬜ thành ✅.
+
+> **Lưu ý:** Tính năng **Google OAuth** (đăng nhập/đăng ký bằng tài khoản Google) được tích hợp xuyên suốt các task 2.2, 2.3, 2.4, 2.8, 2.9, 2.13, 2.18, 2.19, 2.23, 2.26, 2.27. Flow: Frontend → Backend generate OAuth URL → Supabase → Google → Supabase callback → Backend callback endpoint → Issue app JWT → Redirect to Frontend.
 
 ---
 
@@ -88,6 +92,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiration_minutes: int = 60
 
+    # Google OAuth (MỚI)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    frontend_url: str = "http://localhost:8501"
+    backend_url: str = "http://localhost:8000"
+
     # Consent (MỚI)
     current_consent_policy_version: str = "1.0"
 
@@ -120,9 +130,12 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255),  -- NULLABLE: Google OAuth users không có password
     full_name VARCHAR(255) NOT NULL,
     role VARCHAR(20) NOT NULL CHECK (role IN ('patient', 'doctor', 'admin')),
+    auth_provider VARCHAR(50) NOT NULL DEFAULT 'local',  -- 'local' hoặc 'google'
+    provider_user_id VARCHAR(255),  -- Google/Supabase user ID
+    avatar_url TEXT,  -- Google profile picture URL
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -209,6 +222,7 @@ CREATE TABLE audit_logs (
 -- Indexes for performance
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_provider ON users(auth_provider, provider_user_id);
 CREATE INDEX idx_doctor_assignments_doctor ON doctor_assignments(doctor_id) WHERE is_active = TRUE;
 CREATE INDEX idx_doctor_assignments_patient ON doctor_assignments(patient_id) WHERE is_active = TRUE;
 CREATE INDEX idx_chat_sessions_user ON chat_sessions(user_id);
@@ -236,6 +250,12 @@ psql $DATABASE_URL -f docs/schema.sql
 ```python
 # backend/app/core/constants.py
 from enum import Enum
+
+
+class AuthProvider(str, Enum):
+    """Authentication provider types."""
+    LOCAL = "local"
+    GOOGLE = "google"
 
 
 class UserRole(str, Enum):
@@ -488,12 +508,19 @@ class UserLogin(BaseModel):
     password: str
 
 
+class GoogleCallbackParams(BaseModel):
+    """Query params từ Supabase Google OAuth callback."""
+    code: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
     role: UserRole
     is_active: bool
+    auth_provider: str = "local"
+    avatar_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -605,6 +632,21 @@ class UserRepository(BaseRepository[UserResponse]):
             .execute()
         )
         return len(result.data) > 0
+
+    async def get_by_provider_id(
+        self, provider: str, provider_user_id: str
+    ) -> dict[str, Any] | None:
+        """Get raw user data by auth_provider + provider_user_id (cho Google OAuth)."""
+        result = (
+            self._db.table(self._table_name)
+            .select("*")
+            .eq("auth_provider", provider)
+            .eq("provider_user_id", provider_user_id)
+            .execute()
+        )
+        if result.data:
+            return result.data[0]
+        return None
 
     async def list_by_role(self, role: str) -> list[UserResponse]:
         result = (
@@ -775,7 +817,7 @@ class AssignmentRepository(BaseRepository[AssignmentResponse]):
 
 ## Task 2.13 — Tạo `backend/app/services/auth_service.py`
 
-Service xử lý register, login, JWT token creation. Đây là service quan trọng nhất của Milestone 2.
+Service xử lý register, login, JWT token creation, và **Google OAuth** (đăng nhập/đăng ký qua Google). Đây là service quan trọng nhất của Milestone 2.
 
 ```python
 # backend/app/services/auth_service.py
@@ -784,9 +826,10 @@ from typing import Any
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from supabase import Client
 
 from app.core.config import settings
-from app.core.constants import AuditAction, UserRole
+from app.core.constants import AuditAction, AuthProvider, UserRole
 from app.core.exceptions import (
     AlreadyExistsError,
     InvalidCredentialsError,
@@ -802,19 +845,22 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class AuthService:
-    """Handles user registration, login, and JWT token management.
+    """Handles user registration, login, JWT token management, and Google OAuth.
 
     This service encapsulates all authentication logic. It depends on
-    UserRepository for data access and AuditService for logging.
+    UserRepository for data access, AuditService for logging, and
+    Supabase Client for Google OAuth flow.
     """
 
     def __init__(
         self,
         user_repo: UserRepository,
         audit_service: AuditService,
+        supabase: Client,
     ) -> None:
         self._user_repo = user_repo
         self._audit_service = audit_service
+        self._supabase = supabase
 
     async def register(self, data: UserCreate) -> UserResponse:
         """Register a new user.
@@ -934,6 +980,108 @@ class AuthService:
             return payload
         except JWTError as e:
             raise UnauthorizedError(f"Invalid token: {e}") from e
+
+    # ─── Google OAuth ────────────────────────────────────────────────────────
+
+    def get_google_oauth_url(self) -> str:
+        """Generate Supabase Google OAuth URL để redirect user đến Google login.
+
+        Dùng Supabase built-in Google OAuth provider. Supabase sẽ handle
+        toàn bộ OAuth flow với Google, sau đó redirect về callback URL
+        của backend với authorization code.
+
+        Returns:
+            Google OAuth URL string để frontend redirect user đến.
+        """
+        callback_url = f"{settings.backend_url}/api/v1/auth/google/callback"
+        response = self._supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+            "options": {
+                "redirect_to": callback_url,
+            },
+        })
+        return response.url
+
+    async def handle_google_callback(self, code: str) -> TokenResponse:
+        """Xử lý callback từ Supabase sau khi user đăng nhập Google thành công.
+
+        Flow:
+        1. Exchange authorization code cho Supabase session
+        2. Extract user info (email, full_name, avatar_url) từ user_metadata
+        3. Tìm user hiện có bằng provider_user_id, hoặc bằng email (link accounts),
+           hoặc tạo user mới
+        4. Issue app JWT token
+        5. Audit log
+
+        Args:
+            code: Authorization code từ Supabase redirect.
+
+        Returns:
+            TokenResponse với access_token và user data.
+        """
+        # 1. Exchange code for Supabase session
+        session_response = self._supabase.auth.exchange_code_for_session({
+            "auth_code": code,
+        })
+        supabase_user = session_response.user
+
+        # 2. Extract user info
+        email = supabase_user.email
+        metadata = supabase_user.user_metadata or {}
+        full_name = metadata.get("full_name") or metadata.get("name") or email
+        avatar_url = metadata.get("avatar_url") or metadata.get("picture")
+        provider_user_id = supabase_user.id
+
+        # 3. Find or create user
+        # 3a. Tìm bằng provider_user_id (returning user)
+        existing = await self._user_repo.get_by_provider_id(
+            provider=AuthProvider.GOOGLE.value,
+            provider_user_id=provider_user_id,
+        )
+        if existing:
+            user = UserResponse(**existing)
+        else:
+            # 3b. Tìm bằng email (link accounts — user đã register local trước đó)
+            existing_by_email = await self._user_repo.get_by_email(email)
+            if existing_by_email:
+                # Update existing user to link Google account
+                updated = await self._user_repo.update(
+                    existing_by_email["id"],
+                    {
+                        "auth_provider": AuthProvider.GOOGLE.value,
+                        "provider_user_id": provider_user_id,
+                        "avatar_url": avatar_url,
+                    },
+                )
+                user = updated
+            else:
+                # 3c. Tạo user mới (đăng ký qua Google — không cần password)
+                user = await self._user_repo.create({
+                    "email": email,
+                    "full_name": full_name,
+                    "role": UserRole.PATIENT.value,
+                    "auth_provider": AuthProvider.GOOGLE.value,
+                    "provider_user_id": provider_user_id,
+                    "avatar_url": avatar_url,
+                })
+
+        # 4. Issue app JWT token
+        token = self._create_access_token(
+            subject=user.id,
+            role=user.role.value if isinstance(user.role, UserRole) else user.role,
+        )
+
+        # 5. Audit log
+        await self._audit_service.log(
+            user_id=user.id,
+            role=user.role.value if isinstance(user.role, UserRole) else user.role,
+            action=AuditAction.USER_LOGIN,
+            resource_type="user",
+            resource_id=user.id,
+            metadata={"method": "google"},
+        )
+
+        return TokenResponse(access_token=token, user=user)
 ```
 
 ---
@@ -1447,8 +1595,9 @@ def get_audit_service(
 def get_auth_service(
     user_repo: UserRepository = Depends(get_user_repo),
     audit_service: AuditService = Depends(get_audit_service),
+    db: Client = Depends(get_supabase),
 ) -> AuthService:
-    return AuthService(user_repo=user_repo, audit_service=audit_service)
+    return AuthService(user_repo=user_repo, audit_service=audit_service, supabase=db)
 
 
 def get_consent_service(
@@ -1510,13 +1659,17 @@ async def get_current_user(
 
 ## Task 2.19 — Tạo `backend/app/api/auth.py`
 
-Auth API endpoints: register, login, get current user.
+Auth API endpoints: register, login, get current user, **Google OAuth login/register**.
 
 ```python
 # backend/app/api/auth.py
-from fastapi import APIRouter, Depends
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import RedirectResponse
 
 from app.api.dependencies import get_auth_service, get_current_user
+from app.core.config import settings
 from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
 from app.services.auth_service import AuthService
 
@@ -1547,6 +1700,45 @@ async def get_me(
 ) -> UserResponse:
     """Get the currently authenticated user's profile."""
     return current_user
+
+
+# ─── Google OAuth ────────────────────────────────────────────────────────────
+
+
+@router.get("/google")
+async def google_login(
+    auth_service: AuthService = Depends(get_auth_service),
+) -> dict[str, str]:
+    """Trả về Supabase Google OAuth URL để frontend redirect user đến.
+
+    Frontend gọi endpoint này, nhận URL, rồi redirect user đến Google login page.
+    Sau khi user đăng nhập Google, Supabase sẽ redirect về /auth/google/callback.
+    """
+    url = auth_service.get_google_oauth_url()
+    return {"url": url}
+
+
+@router.get("/google/callback")
+async def google_callback(
+    code: str = Query(..., description="Authorization code từ Supabase"),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> RedirectResponse:
+    """Callback endpoint nhận authorization code từ Supabase sau Google login.
+
+    Flow:
+    1. Nhận `code` query param từ Supabase redirect
+    2. Gọi auth_service.handle_google_callback(code) để exchange code,
+       find/create user, issue JWT
+    3. Redirect về frontend với access_token và user_name trong query params
+
+    Frontend sẽ đọc query params để lưu token vào session state.
+    """
+    token_response = await auth_service.handle_google_callback(code)
+    params = urlencode({
+        "access_token": token_response.access_token,
+        "user_name": token_response.user.full_name,
+    })
+    return RedirectResponse(url=f"{settings.frontend_url}?{params}")
 ```
 
 ---
@@ -1868,6 +2060,12 @@ JWT_SECRET_KEY=
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION_MINUTES=60
 
+# ─── Google OAuth (Milestone 2) ──────────────────────────────────────────────
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+FRONTEND_URL=http://localhost:8501
+BACKEND_URL=http://localhost:8000
+
 # ─── Consent ─────────────────────────────────────────────────────────────────
 CURRENT_CONSENT_POLICY_VERSION=1.0
 ```
@@ -2040,10 +2238,12 @@ class TestAuthService:
         self,
         mock_user_repo: UserRepository,
         mock_audit_service: AuditService,
+        mock_supabase: MagicMock,
     ) -> AuthService:
         return AuthService(
             user_repo=mock_user_repo,
             audit_service=mock_audit_service,
+            supabase=mock_supabase,
         )
 
     async def test_register_success(
@@ -2840,5 +3040,157 @@ git commit -m "feat: implement Milestone 2 - Data and Auth Foundation"
 ```
 
 Pre-commit hooks sẽ tự động chạy Ruff + Mypy. Nếu fail, sửa lỗi và commit lại.
+
+---
+
+## Task 2.26 — Cập nhật `frontend/main.py` — Google OAuth + Email/Password Login UI
+
+Thay thế nội dung `frontend/main.py` hiện tại bằng version mới hỗ trợ cả đăng nhập Email/Password lẫn Google OAuth. Frontend dùng Streamlit.
+
+```python
+# frontend/main.py
+import requests
+import streamlit as st
+
+from config import settings
+
+st.set_page_config(page_title="Mental Health AI", page_icon="🧠", layout="wide")
+
+BACKEND_URL = settings.backend_url
+
+
+# ─── Handle OAuth Callback ──────────────────────────────────────────────────
+# Khi Supabase redirect về frontend với ?access_token=...&user_name=...,
+# đọc query params và lưu vào session state.
+query_params = st.query_params
+if "access_token" in query_params:
+    st.session_state["access_token"] = query_params["access_token"]
+    st.session_state["user_name"] = query_params.get("user_name", "User")
+    st.query_params.clear()  # Xóa query params khỏi URL
+
+
+# ─── Auth State ──────────────────────────────────────────────────────────────
+
+if "access_token" in st.session_state:
+    # ── Đã đăng nhập ──
+    st.sidebar.success(f"Xin chào, {st.session_state.get('user_name', 'User')}!")
+
+    if st.sidebar.button("🚪 Đăng xuất"):
+        del st.session_state["access_token"]
+        if "user_name" in st.session_state:
+            del st.session_state["user_name"]
+        st.rerun()
+
+    st.title("🧠 Mental Health AI Platform")
+    st.write("Chào mừng bạn đến với nền tảng hỗ trợ sức khỏe tâm thần.")
+    st.info("Các tính năng chat và phân tích sẽ được bổ sung ở các milestone tiếp theo.")
+
+else:
+    # ── Chưa đăng nhập ──
+    st.title("🧠 Mental Health AI Platform")
+    st.subheader("Đăng nhập để tiếp tục")
+
+    col_email, col_google = st.columns(2)
+
+    # ── Cột trái: Email/Password ──
+    with col_email:
+        st.markdown("### 📧 Đăng nhập bằng Email")
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Mật khẩu", type="password")
+            submitted = st.form_submit_button("Đăng nhập")
+
+            if submitted:
+                if email and password:
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL}/api/v1/auth/login",
+                            json={"email": email, "password": password},
+                            timeout=10,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            st.session_state["access_token"] = data["access_token"]
+                            st.session_state["user_name"] = data["user"]["full_name"]
+                            st.rerun()
+                        else:
+                            st.error(resp.json().get("detail", "Đăng nhập thất bại"))
+                    except requests.exceptions.ConnectionError:
+                        st.error("Không thể kết nối đến server. Hãy đảm bảo backend đang chạy.")
+                else:
+                    st.warning("Vui lòng nhập email và mật khẩu.")
+
+    # ── Cột phải: Google OAuth ──
+    with col_google:
+        st.markdown("### 🔑 Đăng nhập bằng Google")
+        st.write("Đăng nhập hoặc đăng ký nhanh bằng tài khoản Google của bạn.")
+
+        if st.button("🌐 Đăng nhập với Google", use_container_width=True):
+            try:
+                resp = requests.get(
+                    f"{BACKEND_URL}/api/v1/auth/google",
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    google_url = resp.json()["url"]
+                    st.markdown(
+                        f'<meta http-equiv="refresh" content="0;url={google_url}">',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.error("Không thể lấy Google login URL.")
+            except requests.exceptions.ConnectionError:
+                st.error("Không thể kết nối đến server.")
+```
+
+**Giải thích:**
+- **OAuth callback handling:** Khi Supabase hoàn tất Google login, backend redirect về frontend với `?access_token=...&user_name=...`. Streamlit đọc `st.query_params` để lưu token.
+- **2 cột login:** Email/Password (trái) + Google OAuth (phải) — user chọn 1 trong 2 cách.
+- **Google button:** Gọi `GET /api/v1/auth/google` để lấy OAuth URL, rồi dùng `meta refresh` để redirect user đến Google.
+- **Logout:** Xóa `access_token` khỏi `st.session_state` và rerun app.
+
+> **Lưu ý:** File `frontend/config.py` cần import `backend_url` từ settings. Nếu settings chưa có field này, thêm `backend_url: str = "http://localhost:8000"` vào `frontend/config.py`.
+
+---
+
+## Task 2.27 — Setup Google OAuth bên ngoài code (manual, 1 lần)
+
+Đây là các bước setup thủ công cần thực hiện 1 lần trước khi Google OAuth hoạt động:
+
+### Bước 1: Google Cloud Console
+
+1. Truy cập [Google Cloud Console](https://console.cloud.google.com/)
+2. Tạo hoặc chọn project
+3. Vào **APIs & Services → Credentials**
+4. Tạo **OAuth 2.0 Client ID** (Application type: Web application)
+5. Thêm **Authorized redirect URI**: `https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback`
+6. Copy **Client ID** và **Client Secret**
+
+### Bước 2: Supabase Dashboard
+
+1. Truy cập [Supabase Dashboard](https://supabase.com/dashboard)
+2. Chọn project → **Authentication → Providers**
+3. Tìm **Google** → Enable
+4. Paste **Client ID** và **Client Secret** từ bước 1
+5. Save
+
+### Bước 3: Cập nhật `.env`
+
+```env
+GOOGLE_CLIENT_ID=<your-google-client-id>
+GOOGLE_CLIENT_SECRET=<your-google-client-secret>
+FRONTEND_URL=http://localhost:8501
+BACKEND_URL=http://localhost:8000
+```
+
+### Bước 4: Verify
+
+1. Chạy backend: `make dev-be`
+2. Chạy frontend: `make dev-fe`
+3. Mở `http://localhost:8501`
+4. Click **"Đăng nhập với Google"**
+5. Đăng nhập bằng tài khoản Google
+6. Kiểm tra redirect về frontend với token
+7. Kiểm tra user đã được tạo trong bảng `users` với `auth_provider='google'`
 
 ---
