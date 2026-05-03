@@ -23,6 +23,7 @@ help:
 # Install and sync all packages in the workspace
 install:
 	uv sync --all-packages
+	uv run pre-commit install
 
 # Run Backend
 dev-be:
