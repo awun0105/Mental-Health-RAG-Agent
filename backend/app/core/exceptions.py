@@ -71,9 +71,18 @@ class DatabaseError(AppException):
 
 async def app_exception_handler(
     request: Request,
-    exc: AppException,
+    exc: Exception,
 ) -> JSONResponse:
     """Convert AppException instances into consistent JSON API responses."""
+    if not isinstance(exc, AppException):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Internal server error",
+                "error_type": exc.__class__.__name__,
+            },
+        )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
