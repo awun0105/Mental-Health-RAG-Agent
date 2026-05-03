@@ -39,14 +39,18 @@ ingest:
 
 # Auto-format code
 format:
-	uv run ruff check . --fix
 	uv run ruff format .
-	uv run pre-commit run --all-files
+	uv run ruff check . --fix
+
+# uv run pre-commit run --all-files
 
 # Check code quality
 check:
 	uv run ruff check .
 	uv run mypy .
+
+lint: format check
+	@echo "✅ Code is clean and typed!"
 
 # Clean up junk/cache files
 clean:
