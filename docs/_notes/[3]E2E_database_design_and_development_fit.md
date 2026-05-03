@@ -116,55 +116,528 @@ Công cụ dùng trong bước này:
 
 ## Bước 0.4: Xác định trade-offs và mitigation plan
 
+Bước này không phải là bước viết code hay tạo database ngay. Đây là bước “ngồi lại để quyết định trước”: trong MVP, ta sẽ chọn cách làm nào, cách làm đó có điểm yếu gì, và ta sẽ giảm rủi ro bằng cách nào.
+
+Với project Mental Health Sovereign Agentic AI Platform, bước này đặc biệt quan trọng vì hệ thống xử lý dữ liệu sức khỏe tinh thần, có nhiều loại người dùng khác nhau như patient, doctor/counselor và admin, đồng thời có dữ liệu nhạy cảm như chat messages, clinical profiles, risk scores, consent records và audit logs.
+
+Một quyết định database trong project này không chỉ cần tối ưu cho việc “làm nhanh”, mà còn phải cân bằng giữa:
+
+- tốc độ triển khai MVP;
+- privacy-first design;
+- role-based access control;
+- doctor-patient assignment enforcement;
+- consent tracking;
+- auditability;
+- clinical safety;
+- khả năng self-host/private deployment sau này.
+
+**Trade-off** nghĩa là khi chọn một phương án, ta được lợi ở một mặt nhưng phải chấp nhận điểm yếu ở mặt khác.
+
+Ví dụ: nếu chọn Streamlit cho frontend MVP, ta được lợi là làm nhanh, phù hợp prototype, nhưng phải chấp nhận rằng Streamlit không mạnh và linh hoạt như một frontend production bằng React/Next.js. Cách giảm rủi ro là giữ backend API tách biệt để sau này đổi frontend không ảnh hưởng core backend.
+
+Với database cũng tương tự. Bước 0.4 dùng để ghi lại các quyết định kiểu này trước khi viết schema và service.
+
+**Mitigation plan** là kế hoạch giảm rủi ro. Không phải lúc nào MVP cũng chọn được phương án hoàn hảo ngay từ đầu. Nhiều khi ta chọn phương án đủ tốt để đi nhanh, nhưng phải ghi rõ:
+
+- rủi ro của phương án đó là gì;
+- khi nào rủi ro đó có thể gây vấn đề;
+- ta sẽ kiểm soát rủi ro bằng cách nào;
+- sau này khi production hóa sẽ nâng cấp ra sao.
+
+---
+
 ### Trade-off 1: Supabase Auth `auth.users` vs bảng `users` riêng của application
 
-Milestone 2 đang thiết kế bảng `users` riêng trong public schema, chứa:
+#### Vấn đề là gì?
 
-- email;
-- password hash cho local login;
-- full name;
-- role;
-- auth provider;
-- provider user id;
-- avatar URL;
-- active status.
+Supabase có sẵn hệ thống Auth riêng. Khi dùng Supabase Auth, Supabase có bảng nội bộ tên là `auth.users`. Bảng này lưu user identity phục vụ authentication.
 
-Điều này giúp backend kiểm soát role, assignment và app JWT theo cách đơn giản. Với Google OAuth, Supabase xử lý OAuth flow, còn application lưu provider identity vào `users.provider_user_id`.
+Tuy nhiên, project của mình không chỉ cần biết “user này đăng nhập được hay không”. Hệ thống còn cần lưu nhiều thông tin nghiệp vụ riêng của application, ví dụ:
 
-Mitigation:
+- user này là `patient`, `doctor` hay `admin`;
+- doctor nào được assign cho patient nào;
+- user đã chấp nhận consent policy version nào;
+- user có đang active hay đã bị deactivated;
+- Google OAuth account nào tương ứng với application user nào;
+- audit log cần gắn với user ID nào;
+- app JWT cần chứa user ID và role nào.
 
-- Không expose Supabase service key cho frontend.
-- Backend là nơi phát hành app JWT.
-- Nếu sau này muốn dùng Supabase Auth sâu hơn, có thể thêm mapping rõ giữa `auth.users.id` và `public.users.provider_user_id` hoặc `auth_user_id`.
+Vì vậy, Milestone 2 thiết kế một bảng `users` riêng trong public schema của application database. Bảng này chứa:
+
+- `email`;
+- `password_hash` cho local email/password login;
+- `full_name`;
+- `role`: `patient`, `doctor`, `admin`;
+- `auth_provider`: `local` hoặc `google`;
+- `provider_user_id`: Google/Supabase provider user ID;
+- `avatar_url`;
+- `is_active`;
+- `created_at`, `updated_at`.
+
+Điều này giúp backend kiểm soát role, assignment và app JWT theo cách rõ ràng. Với Google OAuth, Supabase xử lý OAuth flow, còn application lưu provider identity vào `users.provider_user_id`.
+
+#### Vì sao đây là trade-off?
+
+Có hai hướng thiết kế.
+
+##### Hướng A: Dùng hoàn toàn Supabase Auth `auth.users`
+
+Lợi ích:
+
+- tận dụng Supabase Auth nhiều hơn;
+- OAuth/session management đi theo chuẩn Supabase hơn;
+- ít phải tự quản lý identity logic.
+
+Hạn chế:
+
+- business role như `patient`, `doctor`, `admin` vẫn phải lưu thêm ở bảng khác;
+- doctor-patient assignment vẫn cần bảng application riêng;
+- consent và audit vẫn cần liên kết với application-level user;
+- backend khó kiểm soát app-specific JWT theo đúng yêu cầu riêng của project;
+- code có thể phụ thuộc sâu hơn vào Supabase Auth internals.
+
+##### Hướng B: Dùng bảng `users` riêng cho application
+
+Lợi ích:
+
+- backend chủ động quản lý role;
+- dễ gắn với `doctor_assignments`, `consent_records`, `audit_logs`;
+- dễ phát hành app JWT riêng;
+- dễ hỗ trợ cả local email/password login và Google OAuth;
+- phù hợp hơn với kiến trúc self-hostable, backend-controlled;
+- dễ enforce clinical access rule theo logic riêng của project.
+
+Hạn chế:
+
+- có thể bị trùng khái niệm user với Supabase Auth;
+- cần mapping giữa Google/Supabase OAuth user và application user;
+- nếu sau này muốn dùng Supabase Auth sâu hơn, có thể cần thêm cột mapping hoặc refactor nhẹ.
+
+#### Quyết định cho project
+
+Trong Milestone 2, ta chọn hướng:
+
+> Dùng bảng `users` riêng của application làm source chính cho role, assignment, consent, audit và app JWT.
+
+Google OAuth vẫn đi qua Supabase, nhưng sau khi OAuth thành công, backend sẽ tìm hoặc tạo user tương ứng trong bảng `users`.
+
+Quy trình dự kiến:
+
+1. User đăng nhập bằng Google.
+2. Supabase xử lý OAuth với Google.
+3. Backend nhận callback/code từ Supabase.
+4. Backend lấy thông tin Google user.
+5. Backend tìm user trong bảng `users` bằng `auth_provider='google'` và `provider_user_id`.
+6. Nếu chưa có, backend có thể tìm theo email để link account.
+7. Nếu vẫn chưa có, backend tạo user mới với role mặc định là `patient`.
+8. Backend phát hành app JWT riêng.
+9. Backend ghi audit log cho login event.
+
+#### Mitigation plan
+
+Để giảm rủi ro của quyết định này:
+
+- Không expose Supabase service role key cho frontend.
+- Backend là nơi duy nhất phát hành app JWT.
+- Frontend không được tự quyết định role.
+- Role luôn được lấy từ database/backend.
+- Bảng `users` có `auth_provider` và `provider_user_id` để mapping Google/Supabase user.
+- Nếu sau này muốn liên kết chặt hơn với Supabase Auth, có thể thêm cột `auth_user_id`.
+- Không lưu role quan trọng chỉ trong Google metadata hoặc frontend session.
+- Khi user login bằng Google, backend phải kiểm tra xem email đã tồn tại chưa để tránh tạo duplicate account không cần thiết.
+- Nếu link local account với Google account, backend phải update `auth_provider`, `provider_user_id`, `avatar_url` một cách có kiểm soát.
+- Audit log phải ghi lại login method, ví dụ `metadata={"method": "google"}`.
+
+Nói ngắn gọn:
+
+> Ta chấp nhận quản lý user ở application layer để có toàn quyền kiểm soát RBAC, doctor-patient assignment, consent và clinical access. Rủi ro là phải mapping OAuth cẩn thận, nên cần lưu `auth_provider`, `provider_user_id`, và về sau có thể thêm `auth_user_id`.
+
+---
 
 ### Trade-off 2: Backend RBAC trước, database RLS hardening sau
 
-Milestone 2 bắt buộc backend kiểm tra JWT, role và doctor assignment. RLS có thể được thêm dần sau khi schema và API ổn định.
+#### Vấn đề là gì?
 
-Mitigation:
+Có hai lớp bảo vệ quyền truy cập dữ liệu:
 
-- Tất cả clinical endpoints tương lai phải dùng `get_current_user`, `require_role`, và assignment check.
-- Nếu sử dụng Supabase anon key từ frontend trong tương lai, phải bật RLS đầy đủ trước.
-- Trong MVP, service key chỉ nằm ở backend/server-side.
+##### 1. Application-level authorization
+
+Đây là lớp kiểm soát quyền trong FastAPI backend. Backend sẽ kiểm tra:
+
+- user đã login chưa;
+- JWT có hợp lệ không;
+- user có đang active không;
+- user là `patient`, `doctor` hay `admin`;
+- doctor có được assign với patient này không;
+- user đã accept consent chưa;
+- action này có cần ghi audit log không.
+
+Các thành phần liên quan trong Milestone 2:
+
+- `get_current_user`;
+- `require_role`;
+- `AssignmentService.is_doctor_assigned_to_patient`;
+- `ConsentService`;
+- `AuditService`;
+- tests cho 401/403.
+
+##### 2. Database-level authorization / RLS
+
+RLS là Row Level Security của PostgreSQL/Supabase. Nó cho phép viết policy ngay trong database để giới hạn từng dòng dữ liệu.
+
+Ví dụ:
+
+- patient chỉ được select chat session của chính mình;
+- doctor chỉ được select patient đã được assign;
+- admin mới được tạo doctor-patient assignment;
+- user không được truy cập clinical profile nếu không có quyền.
+
+#### Vì sao đây là trade-off?
+
+Nếu làm RLS đầy đủ ngay từ đầu:
+
+Lợi ích:
+
+- database có lớp bảo vệ riêng;
+- nếu backend query nhầm, database vẫn có thể chặn;
+- tốt hơn cho production security;
+- phù hợp nếu frontend truy cập Supabase trực tiếp bằng anon key.
+
+Hạn chế:
+
+- mất nhiều thời gian thiết kế policy;
+- debug khó hơn trong MVP;
+- policy dễ sai khi workflow còn đang thay đổi;
+- nếu backend dùng service role key, RLS có thể bị bypass tùy cấu hình;
+- phải test nhiều trường hợp row-level access phức tạp.
+
+Nếu làm backend RBAC trước:
+
+Lợi ích:
+
+- nhanh hơn cho Milestone 2;
+- dễ test bằng FastAPI/pytest;
+- logic nằm ở service/dependency layer, dễ đọc;
+- phù hợp với Repository pattern và Service layer trong plan;
+- dễ thay đổi khi API và workflow còn đang phát triển.
+
+Hạn chế:
+
+- nếu một endpoint quên check role hoặc assignment, có thể gây data leak;
+- database chưa tự bảo vệ mạnh ở row-level;
+- chưa đủ production hardening nếu chỉ dựa vào backend checks.
+
+#### Quyết định cho project
+
+Trong Milestone 2, ta chọn:
+
+> Backend-enforced RBAC trước. Database RLS sẽ được thêm dần như một hardening layer sau khi schema và API ổn định, đặc biệt trước khi production hoặc nếu frontend truy cập Supabase trực tiếp.
+
+Tức là hiện tại FastAPI backend phải kiểm soát quyền bằng:
+
+- `get_current_user`;
+- `require_role`;
+- `AssignmentService.is_doctor_assigned_to_patient`;
+- `ConsentService.has_valid_consent`;
+- `AuditService.log`;
+- tests cho RBAC.
+
+#### Mitigation plan
+
+Để giảm rủi ro:
+
+- Tất cả protected endpoints phải dùng dependency lấy current user.
+- Admin endpoints phải dùng `require_role(UserRole.ADMIN)`.
+- Doctor endpoints phải dùng `require_role(UserRole.DOCTOR)`.
+- Patient endpoints phải đảm bảo patient chỉ query dữ liệu của chính mình.
+- Clinical endpoints ở milestone sau phải check doctor-patient assignment.
+- Patient không bao giờ có API để lấy `clinical_profiles`.
+- Doctor chỉ được xem patient nếu có active assignment.
+- Admin có thể quản lý assignment/user, nhưng không mặc định được xem raw chat nếu policy chưa cho phép.
+- Viết tests cho các case `401 Unauthorized` và `403 Forbidden`.
+- Viết tests để đảm bảo patient không gọi được admin/doctor endpoints.
+- Viết tests để đảm bảo doctor không xem được unassigned patient.
+- Audit log mọi sensitive access như doctor xem profile, tạo assignment, deactivate assignment, consent accepted.
+- Nếu frontend sau này truy cập Supabase trực tiếp bằng anon key, phải bật RLS đầy đủ trước.
+- Trước production, cần review DB-level permissions và thêm RLS policies cho các bảng nhạy cảm.
+
+Nói ngắn gọn:
+
+> Ta chưa làm RLS full ngay vì MVP cần đi nhanh và backend workflow còn đang thay đổi. Nhưng backend bắt buộc phải chặn quyền nghiêm túc bằng JWT, role, assignment check và tests. RLS sẽ là lớp hardening sau.
+
+---
 
 ### Trade-off 3: Dùng JSONB cho clinical data linh hoạt
 
-Các trường như `symptoms`, `risk_markers`, `evidence_snippets`, `metadata`, `evidence` có thể dùng JSONB để linh hoạt khi agent workflow chưa ổn định hoàn toàn.
+#### Vấn đề là gì?
 
-Mitigation:
+Một số dữ liệu clinical/AI-generated trong project chưa chắc có cấu trúc cố định ngay từ đầu.
 
-- Dùng Pydantic schemas ở backend để validate cấu trúc JSON.
-- Khi format ổn định, có thể chuẩn hóa thêm bảng con hoặc thêm generated columns/index JSONB nếu query nhiều.
+Ví dụ:
+
+- `symptoms`;
+- `risk_markers`;
+- `evidence_snippets`;
+- `metadata`;
+- `evidence`;
+- trace metadata;
+- safety metadata.
+
+Các field này có thể thay đổi khi ta implement thêm agent workflow ở các milestone sau, đặc biệt là:
+
+- Safety Guardrail Agent;
+- Silent Clinical Analyzer;
+- DSM-5 Retrieval Agent;
+- Doctor Copilot Agent;
+- Stress/Risk Scoring workflow.
+
+Ở Milestone 2, ta mới dựng Data/Auth Foundation. Agent workflow chưa ổn định, nên nếu schema clinical quá cứng ngay từ đầu, rất dễ phải migration nhiều lần.
+
+#### Vì sao đây là trade-off?
+
+Có hai hướng thiết kế.
+
+##### Hướng A: Chuẩn hóa thành nhiều bảng/cột ngay
+
+Ví dụ:
+
+- bảng `symptoms`;
+- bảng `risk_markers`;
+- bảng `clinical_evidence_snippets`;
+- bảng `score_evidence_items`;
+- bảng `clinical_profile_versions`.
+
+Lợi ích:
+
+- dữ liệu có cấu trúc rõ;
+- query dễ hơn;
+- constraint chặt hơn;
+- analytics sau này tốt hơn.
+
+Hạn chế:
+
+- thiết kế chậm hơn;
+- dễ sai vì agent output chưa ổn định;
+- mỗi lần đổi format output của AI lại phải migration;
+- MVP bị nặng database design quá sớm;
+- khó iterate nhanh ở giai đoạn đang tìm đúng workflow.
+
+##### Hướng B: Dùng JSONB cho một số field linh hoạt
+
+Ví dụ:
+
+```sql
+symptoms JSONB DEFAULT '[]',
+risk_markers JSONB DEFAULT '[]',
+evidence_snippets JSONB DEFAULT '[]',
+metadata JSONB DEFAULT '{}',
+evidence JSONB DEFAULT '{}'
+```
+
+Lợi ích:
+
+- linh hoạt;
+- phù hợp với AI-generated data giai đoạn đầu;
+- dễ lưu array/object phức tạp;
+- không cần migration mỗi khi format nhỏ thay đổi;
+- phù hợp với MVP khi agent output còn đang evolve.
+
+Hạn chế:
+
+- database constraint yếu hơn;
+- query phức tạp hơn nếu sau này cần analytics;
+- dễ lưu dữ liệu lộn xộn nếu backend không validate;
+- khó đảm bảo schema thống nhất nếu không có Pydantic model;
+- JSONB có thể bị lạm dụng thành nơi nhét mọi thứ.
+
+#### Quyết định cho project
+
+Trong Milestone 2, ta dùng JSONB cho các field có cấu trúc còn linh hoạt:
+
+- `chat_sessions.metadata`;
+- `clinical_profiles.symptoms`;
+- `clinical_profiles.risk_markers`;
+- `clinical_profiles.evidence_snippets`;
+- `stress_risk_scores.evidence`;
+- `audit_logs.metadata`.
+
+Các field định danh, phân quyền và query chính vẫn phải là cột rõ ràng, ví dụ:
+
+- `users.email`;
+- `users.role`;
+- `doctor_assignments.doctor_id`;
+- `doctor_assignments.patient_id`;
+- `chat_sessions.user_id`;
+- `chat_messages.session_id`;
+- `clinical_profiles.patient_id`;
+- `stress_risk_scores.score`;
+- `audit_logs.action`;
+- `audit_logs.created_at`.
+
+Không dùng JSONB để thay thế các quan hệ chính như user, session, assignment hoặc role.
+
+#### Mitigation plan
+
+Để giảm rủi ro:
+
+- Dùng Pydantic schemas ở backend để validate cấu trúc JSON trước khi ghi vào database.
+- Không để mọi thứ tùy tiện nhét vào `metadata`.
+- Đặt convention rõ cho từng JSONB field.
+- `symptoms` nên là array các object hoặc string có format thống nhất.
+- `risk_markers` nên là array có severity/source nếu cần.
+- `evidence_snippets` nên chứa snippet text ngắn, source message/session reference, timestamp nếu có.
+- `audit_logs.metadata` không nên chứa raw chat hoặc dữ liệu quá nhạy cảm nếu không cần.
+- Khi format clinical profile ổn định, có thể chuẩn hóa thêm bảng con.
+- Nếu query JSONB nhiều, có thể thêm GIN index hoặc generated columns sau.
+- Không lưu doctor-facing diagnosis/differential diagnosis vào JSONB rồi vô tình expose qua patient API.
+- API response models phải tách patient-facing và doctor-facing rõ ràng.
+
+Nói ngắn gọn:
+
+> Ta dùng JSONB vì output AI và clinical analyzer còn thay đổi trong MVP. Rủi ro là dữ liệu thiếu chuẩn và khó query. Cách giảm rủi ro là validate bằng Pydantic schemas, đặt convention rõ, và chuẩn hóa sau khi workflow ổn định.
+
+---
 
 ### Trade-off 4: Lưu raw chat để phân tích session nhưng hạn chế hiển thị
 
-Hệ thống cần raw chat để silent clinical analyzer tạo profile sau session. Tuy nhiên doctor dashboard không nên mặc định expose toàn bộ raw chat.
+#### Vấn đề là gì?
 
-Mitigation:
+Hệ thống cần lưu chat messages vì nhiều lý do:
 
-- Doctor-facing UI ưu tiên evidence snippets và clinical profile.
-- Raw chat access nếu có phải được policy-gated và audit-logged.
+- patient cần session history;
+- Safety Guardrail cần metadata để phát hiện crisis/self-harm/violence;
+- Silent Clinical Analyzer cần đọc session để tạo clinical profile;
+- Stress/Risk Scoring cần evidence;
+- doctor-facing clinical profile cần evidence snippets;
+- audit/debug/evaluation cần trace;
+- future workflow có thể cần xem lại session context.
+
+Tuy nhiên, raw chat là dữ liệu rất nhạy cảm. Trong mental health context, message của patient có thể chứa thông tin cá nhân, cảm xúc, sang chấn, rủi ro tự hại, quan hệ gia đình, sức khỏe, công việc hoặc các thông tin riêng tư khác.
+
+Vì vậy, không thể xem raw chat như dữ liệu bình thường. Việc lưu raw chat phải đi kèm với giới hạn truy cập, audit logging, retention policy và UI policy.
+
+#### Vì sao đây là trade-off?
+
+Nếu không lưu raw chat:
+
+Lợi ích:
+
+- giảm rủi ro privacy;
+- ít dữ liệu nhạy cảm trong database;
+- đơn giản hơn về compliance;
+- giảm hậu quả nếu database bị lộ.
+
+Hạn chế:
+
+- không tạo được clinical profile chất lượng;
+- không có evidence snippets;
+- khó audit/evaluate AI workflow;
+- doctor thiếu context;
+- không hiển thị được session history cho patient;
+- không tính risk trend tốt;
+- khó debug safety incident.
+
+Nếu lưu raw chat:
+
+Lợi ích:
+
+- đủ dữ liệu cho patient chat/session history;
+- đủ dữ liệu cho Silent Clinical Analyzer;
+- hỗ trợ evidence snippets;
+- hỗ trợ stress/risk score;
+- hỗ trợ debugging và evaluation;
+- hỗ trợ audit khi có incident;
+- giúp hệ thống có khả năng cải thiện workflow sau này.
+
+Hạn chế:
+
+- database chứa dữ liệu cực kỳ nhạy cảm;
+- nguy cơ leak nếu phân quyền sai;
+- doctor/admin access phải được kiểm soát kỹ;
+- cần retention/deletion/anonymization policy;
+- backup cũng trở thành dữ liệu nhạy cảm;
+- logs/debug output không được vô tình in raw message.
+
+#### Quyết định cho project
+
+Trong MVP, ta vẫn lưu `chat_messages`, vì nếu không lưu thì các workflow quan trọng như session closure, clinical profile generation, stress/risk scoring và evidence snippet extraction sẽ không hoạt động tốt.
+
+Tuy nhiên:
+
+> Raw chat không nên là dữ liệu được expose mặc định trên doctor dashboard. Doctor-facing UI nên ưu tiên `clinical_profiles`, `stress_risk_scores` và `evidence_snippets`.
+
+Access rule:
+
+- Patient được xem chat/session của chính mình.
+- Doctor chỉ được xem dữ liệu bệnh nhân được assign.
+- Patient không được xem `clinical_profiles`.
+- Doctor dashboard không mặc định hiển thị toàn bộ raw chat.
+- Admin quản lý user/assignment/config, nhưng không mặc định được xem raw chat nếu policy chưa cho phép.
+- Nếu sau này có raw chat access cho doctor/admin, action đó phải được policy-gated và audit-logged.
+
+#### Mitigation plan
+
+Để giảm rủi ro:
+
+- Patient chỉ query session/message của chính mình.
+- Doctor chỉ query assigned patients.
+- Patient không có API để lấy `clinical_profiles`.
+- Doctor dashboard ưu tiên `evidence_snippets` và clinical profile thay vì full raw chat.
+- Raw chat access, nếu có, phải có lý do nghiệp vụ rõ ràng.
+- Raw chat access phải được audit log.
 - Audit log không nên lưu nguyên nội dung message nhạy cảm trừ khi thật sự cần.
+- Backend không được log raw message ra console/application logs một cách tùy tiện.
+- Frontend không nên render raw chat ở doctor view nếu không có explicit workflow.
+- Backup chứa raw chat phải được xem là sensitive data.
+- Production cần encryption, backup policy, restore test và access review.
+- Sau này cần có retention policy cho chat messages.
+- Sau này có thể thêm anonymization/purge job.
+- Evidence snippets nên trích vừa đủ để doctor hiểu context, không copy toàn bộ session nếu không cần.
+- Khi có crisis event, lưu severity và metadata cần thiết, nhưng tránh phơi bày quá nhiều nội dung nhạy cảm trong audit metadata.
+
+Nói ngắn gọn:
+
+> Ta cần lưu raw chat để hệ thống hoạt động, nhưng không được biến raw chat thành dữ liệu ai cũng xem được. Raw chat phải được bảo vệ bằng role, assignment check, UI policy, audit log và retention policy.
+
+---
+
+### Tóm tắt các trade-offs trong Milestone 2
+
+| Trade-off                                               | Quyết định cho MVP                                                                                       | Rủi ro chính                                     | Mitigation                                                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Supabase Auth `auth.users` vs application `users` table | Dùng bảng `users` riêng của application làm source chính cho role, assignment, consent, audit và app JWT | Trùng/mapping user với Supabase Auth             | Lưu `auth_provider`, `provider_user_id`; backend phát hành JWT; có thể thêm `auth_user_id` sau |
+| Backend RBAC vs database RLS full                       | Backend RBAC trước, RLS hardening sau                                                                    | Route quên check quyền có thể leak data          | `get_current_user`, `require_role`, assignment check, tests 401/403, audit sensitive access    |
+| JSONB vs schema chuẩn hóa                               | Dùng JSONB cho clinical/AI-generated fields còn linh hoạt                                                | Dữ liệu thiếu chuẩn, khó query analytics         | Pydantic validation, convention rõ, chuẩn hóa sau khi workflow ổn định                         |
+| Lưu raw chat vs minimize sensitive data                 | Có lưu raw chat, nhưng hạn chế hiển thị và không expose mặc định cho doctor/admin                        | Dữ liệu nhạy cảm có thể bị lộ nếu phân quyền sai | Role/assignment check, evidence snippets, audit log, retention policy, no raw chat in logs     |
+
+---
+
+### Kết luận của Bước 0.4
+
+Bước 0.4 giúp ta ghi lại các quyết định “chọn A thay vì B” trước khi bắt đầu viết database schema và backend service.
+
+Nếu không có bước này, khi vào Milestone 2 sẽ dễ bị lẫn các câu hỏi nền tảng như:
+
+- Có dùng Supabase Auth hoàn toàn không?
+- App JWT do ai phát hành?
+- Role lưu ở đâu?
+- Doctor access check ở backend hay database?
+- Có cần RLS full ngay không?
+- Clinical profile dùng schema cứng hay JSONB?
+- Có lưu raw chat không?
+- Patient có thấy clinical profile không?
+- Admin có được xem raw chat không?
+
+Quyết định hiện tại cho MVP là:
+
+1. Dùng application `users` table làm source chính cho role, assignment, consent, audit và app JWT.
+2. Dùng backend-enforced RBAC trước, RLS hardening sau.
+3. Dùng JSONB cho các field clinical/AI-generated còn linh hoạt.
+4. Lưu raw chat để phục vụ workflow, nhưng hạn chế hiển thị và bảo vệ bằng role, assignment check, audit log và retention policy.
+
+Một câu tóm gọn:
+
+> Bước 0.4 là bước ghi lại các quyết định kiến trúc có đánh đổi trong database design, kèm lý do và cách giảm rủi ro, để MVP đi nhanh nhưng không phá vỡ định hướng privacy-first, doctor-assignment, consent, audit và clinical safety của project.
 
 ## Bước 0.5: Output cần có sau Giai đoạn 0
 
