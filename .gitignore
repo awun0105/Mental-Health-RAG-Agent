@@ -54,3 +54,4 @@ docs/.plan/*
 !docs/.plan/MASTER_PLAN.md
 !docs/.plan/MILESTONE1.md
 !docs/.plan/MILESTONE2.md
+docs/checkpoints/*
