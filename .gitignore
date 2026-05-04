@@ -26,16 +26,11 @@ htmlcov/
 # ==========================================
 # 4. Thư mục cá nhân & Tài liệu nháp
 # ==========================================
-docs/_notes/*.backup
-docs/_notes/temp_*.md
+
 docs/_notes/*
-
-
 !docs/_notes/[1]setup_process.md
 !docs/_notes/[2]E2E_database_design_and_development_fit.md
 !docs/_notes/README.md
-
-*.md.backup
 
 # ==========================================
 # 5. Hệ điều hành & IDE (Code Editor)
