@@ -34,6 +34,7 @@
 - [Phần 16. Bài học kiến trúc sau giai đoạn này](#phần-16-bài-học-kiến-trúc-sau-giai-đoạn-này)
 - [Phần 17. Checklist đọc lại trước khi tiếp tục](#phần-17-checklist-đọc-lại-trước-khi-tiếp-tục)
 - [Phần 18. Next implementation direction](#phần-18-next-implementation-direction)
+- [Phần 19. Code-quality refactor và automated tests phase 1 (PR #9 + PR #10)](#phần-19-code-quality-refactor-và-automated-tests-phase-1-pr-9--pr-10)
 
 ---
 
@@ -697,6 +698,7 @@ Tạo `BaseRepository` dùng chung cho các bảng Supabase.
 - `update`
 - `delete`
 - `_first_row`
+- `_rows` *(lift từ 4 repo con vào base ở [PR #9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9) — xem Phần 19)*
 - `_to_model`
 
 #### Vì sao cần `BaseRepository`?
@@ -1205,6 +1207,22 @@ role  = user.role
 exp   = expiration timestamp
 ```
 
+#### Refactor (PR #9)
+
+4 helper viết tay `_get_required_string/_bool/_datetime` đã bị thay bằng:
+
+```python
+UserResponse.model_validate(dict(row))
+```
+
+**Lý do:**
+
+- `UserRepository._to_model` đã làm đúng pattern này → service nên reuse;
+- giảm coupling với raw row shape;
+- malformed row (thiếu cột) sẽ raise `DatabaseError` (500), không leak `ValidationError`.
+
+Login cũng được sửa để đọc `password_hash` / `is_active` qua dict access + raise `DatabaseError` nếu cột thiếu (vì đó là vấn đề schema, không phải vấn đề auth). Chi tiết ở Phần 19.
+
 #### Lỗi đã gặp
 
 **Lỗi 1: Exception constructor mismatch**
@@ -1261,7 +1279,7 @@ Tạo một nơi duy nhất để ghi audit log.
 
 **Method chính:**
 
-- `log_event()`
+- `log_event()` *(thêm param `role: str | None = None` ở [PR #9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9) để khớp cột `audit_logs.role` — xem Phần 19)*
 
 #### Vì sao không ghi audit trực tiếp từ từng service?
 
@@ -1314,7 +1332,7 @@ Xử lý consent business logic.
 
 **Method:**
 
-- `accept_consent`
+- `accept_consent` *(thêm param `role: str` ở [PR #9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9) để propagate xuống `AuditService.log_event` — xem Phần 19)*
 - `get_status`
 
 #### Accept flow
@@ -1371,11 +1389,13 @@ Xử lý doctor-patient assignment business logic.
 
 **Method:**
 
-- `create_assignment`
-- `deactivate_assignment`
+- `create_assignment` *(thêm param `assigned_by_role: str` ở [PR #9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9))*
+- `deactivate_assignment` *(thêm param `deactivated_by_role: str` ở PR #9)*
 - `ensure_doctor_can_access_patient`
 - `list_patients_for_doctor`
 - `list_doctors_for_patient`
+
+> Cả 2 method create/deactivate đều propagate role xuống `AuditService.log_event`. Xem Phần 19.
 
 #### Create assignment flow
 
@@ -1464,7 +1484,7 @@ Wire toàn bộ dependencies cho FastAPI.
 - `require_current_admin`
 - `require_current_doctor`
 - `require_current_patient`
-- `require_current_doctor_or_admin`
+- `require_current_doctor_or_admin` *(refactor ở [PR #9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9) để gọi lại `require_roles({DOCTOR, ADMIN})` thay vì viết tay logic — xem Phần 19)*
 
 #### Vì sao cần file này?
 
@@ -2378,6 +2398,7 @@ only then return doctor-facing data
 | DB-2.22 | `main.py` router + exception wiring |
 | DB-2.23 | Supabase setup + schema apply |
 | DB-2.24 | smoke test register/login/me/consent |
+| DB-2.25 | automated tests phase 1 ([PR #10](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/10), 16 tests trên FakeSupabase — xem Phần 19) |
 
 ### Verified runtime flows
 
@@ -2393,15 +2414,15 @@ only then return doctor-facing data
 
 ### Important unresolved / future tasks
 
-- DB-2.25 automated tests
 - DB-2.26 frontend auth UI
 - DB-2.27 Google OAuth setup
+- automated tests phase 2 (FastAPI `TestClient` + httpx, RBAC API-layer, Google OAuth tests — extend từ phase 1 ở PR #10)
 
 Nếu project muốn giữ Milestone 2 strict theo original plan, nên làm tiếp:
 
-- automated tests
 - frontend auth UI
 - Google OAuth
+- mở rộng test suite phase 2
 
 Nếu muốn chuyển sớm sang chat/session foundation, có thể bắt đầu Phase 3 nhưng nên ghi rõ test/frontend/OAuth còn pending.
 
@@ -2558,11 +2579,12 @@ Có hai hướng tiếp theo.
 
 ### Hướng A — Hoàn thiện phần còn lại của Milestone 2
 
-- DB-2.25 automated tests
 - DB-2.26 frontend auth UI
 - DB-2.27 Google OAuth
+- automated tests phase 2 (mở rộng từ phase 1 ở [PR #10](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/10))
 
 > Phù hợp nếu muốn Milestone 2 thật đầy đủ trước khi chuyển phase.
+> Phase 1 tests đã đóng gap DB-2.25; chi tiết ở Phần 19.
 
 ### Hướng B — Sang Phase 3: Session & Chat Foundation
 
@@ -2578,3 +2600,290 @@ Có hai hướng tiếp theo.
 ### Khuyến nghị kỹ thuật
 
 > Nếu mục tiêu là foundation chắc, làm DB-2.25 tests trước. Nếu mục tiêu là prototype nhanh, sang Phase 3 nhưng vẫn ghi test debt lại.
+
+> Cập nhật: phase 1 tests đã có sẵn ở [PR #10](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/10). Foundation hiện đủ chắc để sang Phase 3, miễn ghi nợ phase 2 (API-layer + OAuth tests).
+
+---
+
+## Phần 19. Code-quality refactor và automated tests phase 1 (PR #9 + PR #10)
+
+### 19.1 Bối cảnh — code-quality audit sau smoke test
+
+Sau khi DB-2.24 (manual smoke test register/login/consent) pass, một code-quality audit Milestone 2 phát hiện 6 hạn chế trong code đã merge:
+
+| # | Hạn chế | Ảnh hưởng |
+|---|---------|-----------|
+| 1 | `_rows(data)` copy-paste 4 lần ở `user_repo.py`, `consent_repo.py`, `audit_repo.py`, `assignment_repo.py` | DRY violation, dễ lệch khi sửa |
+| 2 | `auth_service._row_to_user_response` viết tay 4 helper parse `JSONRow` | Coupling không cần thiết với raw row, đã có `UserResponse.model_validate(dict(row))` ở `UserRepository._to_model` |
+| 3 | `dependencies.require_current_doctor_or_admin` viết tay logic + `import ForbiddenError` bên trong hàm | Vi phạm "imports at top" và DRY (đã có `require_roles` ở `core/security.py`) |
+| 4 | `AuthService._get_required_string/_bool/_datetime` raise `UnauthorizedError` cho lỗi thiếu cột DB | Domain coupling sai — đây là `DatabaseError` về bản chất, không phải auth error |
+| 5 | `audit_service.log_event` chưa nhận `role` mặc dù schema `audit_logs.role` đã có sẵn | Milestone 3+ (clinical access) sẽ cần audit theo role để filter dashboard |
+| 6 | `backend/tests/` chỉ có `__init__.py` — không có test tự động | DB-2.25 chưa được đóng |
+
+Kết quả: 2 PR sequential.
+
+- [PR #9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9) — refactor 5 hạn chế đầu (1–5).
+- [PR #10](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/10) — đóng hạn chế 6 (automated tests phase 1).
+
+### 19.2 PR #9 — code-quality refactor
+
+#### 19.2.1 Lift `_rows()` lên `BaseRepository`
+
+**Trước:** mỗi repo con có:
+
+```python
+def _rows(self, data: object) -> list[JSONRow]:
+    if not isinstance(data, list):
+        return []
+    rows: list[JSONRow] = []
+    for item in data:
+        if isinstance(item, dict):
+            rows.append(cast(JSONRow, item))
+    return rows
+```
+
+Giống nhau từng dòng × 4 file.
+
+**Sau:** chỉ còn ở `BaseRepository` (đã sẵn `cast` import). 4 repo con xoá luôn `_rows()` + xoá `from typing import cast` không còn dùng nữa (nếu có).
+
+**Lợi ích:**
+
+- DRY — sửa 1 chỗ duy nhất khi cần đổi behavior;
+- Liskov substitution clean — base xử lý format Supabase response, child chỉ lo `_to_model`.
+
+#### 19.2.2 Đơn giản hoá `AuthService._row_to_user_response`
+
+**Trước:** 4 helper viết tay:
+
+```python
+self._get_required_string(row, "id")
+self._get_required_string(row, "email")
+self._get_required_bool(row, "is_active")
+self._get_required_datetime(row, "created_at")
+# … (lặp ~30 dòng)
+```
+
+Mỗi helper raise `UnauthorizedError` cho missing column → domain mismatch.
+
+**Sau:**
+
+```python
+def _row_to_user_response(self, row: JSONRow) -> UserResponse:
+    try:
+        return UserResponse.model_validate(dict(row))
+    except ValidationError as exc:
+        raise DatabaseError("Invalid user row shape") from exc
+```
+
+**Lý do wrap try/except:**
+
+- malformed row (cột thiếu / type sai) là vấn đề schema, không phải vấn đề auth;
+- `DatabaseError` (500) đúng domain, không leak raw `ValidationError` traceback ra client;
+- `UserRepository._to_model` đã dùng pattern này, service giờ đồng bộ.
+
+`AuthService.login` cũng được sửa: đọc `password_hash` / `is_active` qua dict access + `DatabaseError` nếu cột thiếu, thay vì 3 helper riêng:
+
+```python
+password_hash = user_row.get("password_hash")
+if not isinstance(password_hash, str) or not password_hash:
+    raise DatabaseError("User row missing password_hash")
+
+is_active = user_row.get("is_active")
+if not isinstance(is_active, bool):
+    raise DatabaseError("User row missing is_active")
+if not is_active:
+    raise UnauthorizedError("User account is inactive")
+```
+
+> `UnauthorizedError("User account is inactive")` được giữ — vì đây mới là business rule (user tồn tại nhưng bị deactivate), không phải lỗi schema.
+
+#### 19.2.3 RBAC dependency reuse `require_roles`
+
+**Trước:**
+
+```python
+def require_current_doctor_or_admin(
+    current_user: Annotated[CurrentUserClaims, Depends(get_current_user)],
+) -> CurrentUserClaims:
+    from app.core.exceptions import ForbiddenError  # import inline → vi phạm style
+    if current_user.role not in {UserRole.DOCTOR, UserRole.ADMIN}:
+        raise ForbiddenError("…")
+    return current_user
+```
+
+**Sau:**
+
+```python
+from app.core.security import require_roles  # import top
+
+def require_current_doctor_or_admin(
+    current_user: Annotated[CurrentUserClaims, Depends(get_current_user)],
+) -> CurrentUserClaims:
+    require_roles(current_user, {UserRole.DOCTOR, UserRole.ADMIN})
+    return current_user
+```
+
+**Lợi ích:**
+
+- imports at top — đúng project style;
+- tái sử dụng `require_roles` đã có sẵn ở `core/security.py`;
+- error message format đồng bộ với 3 dependency `require_current_admin/doctor/patient`.
+
+#### 19.2.4 Audit role propagation
+
+Schema `audit_logs.role` đã có sẵn (verify bằng SQL `information_schema.columns` trên Supabase thật trước khi sửa code), nhưng `log_event()` chưa nhận. Giờ thêm:
+
+```python
+async def log_event(
+    self,
+    *,
+    user_id: str | None,
+    action: AuditAction,
+    role: str | None = None,                  # NEW
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    ip_address: str | None = None,
+) -> None: ...
+```
+
+**Cascade tới các caller:**
+
+- `ConsentService.accept_consent(user_id, payload, role, ip_address)` — route `api/consent.py` truyền `role=current_user.role.value`.
+- `AssignmentService.create_assignment(payload, assigned_by, assigned_by_role, ip_address)` — route `api/admin.py` truyền `assigned_by_role=current_user.role.value`.
+- `AssignmentService.deactivate_assignment(assignment_id, deactivated_by, deactivated_by_role, ip_address)` — route `api/admin.py` truyền `deactivated_by_role=current_user.role.value`.
+
+**Lý do `role: str | None = None` (không phải `UserRole | str | None`):**
+
+- khớp DB column type (`text NULL`);
+- khớp `AuditLogCreate.role: str | None`;
+- caller gọi `current_user.role.value` ngay tại route → service không phải lo enum coercion.
+
+#### 19.2.5 Real Supabase smoke test
+
+Sau refactor, chạy verification trên Supabase thật (không phải FakeSupabase):
+
+```text
+1. Insert audit log với role='system' + metadata={'origin':'PR4_smoke','safe':True}
+2. SELECT lại, đối chiếu role + metadata
+3. DELETE row test, verify không sót
+4. Import smoke: app.main load, 13 route đăng ký OK, không signature mismatch
+```
+
+**Kết quả:** all pass. `make check` (ruff + mypy strict) cũng pass trên 35 file.
+
+### 19.3 PR #10 — automated tests phase 1
+
+#### 19.3.1 Mục tiêu
+
+Đóng DB-2.25 với một test foundation **chắc và nhỏ**, không phải nhồi 30 test một lần. Lý do: `FakeSupabase` là phần dễ tạo bug nhất (mock không khớp Supabase thật → test pass giả). Phase 1 tập trung 12-15 test cốt lõi đã prove FakeSupabase đúng + service layer hoạt động; phase 2 (sau) sẽ mở rộng API-layer với `TestClient` + `httpx`.
+
+#### 19.3.2 Layout
+
+```text
+backend/tests/
+├── __init__.py
+├── conftest.py                  ← per-test fixtures + make_user_row helper
+├── fakes/
+│   ├── __init__.py
+│   └── fake_supabase.py         ← chain stub mimic supabase Client
+├── test_health.py               (1)
+├── test_security.py             (4)
+├── test_auth_service.py         (6)
+├── test_consent_service.py      (2)
+├── test_audit_service.py        (1)
+└── test_assignment_service.py   (2)
+```
+
+Total: **16 tests** (target 12–15, vừa overshoot 1 cho regression guard `missing password_hash`).
+
+#### 19.3.3 FakeSupabase design
+
+Mimic **đúng và chỉ** chain API mà các repo trong codebase này dùng:
+
+```python
+client.table(name).select("*").eq(...).order(...).limit(...).execute()
+client.table(name).insert(payload).execute()
+client.table(name).update(payload).eq(...).execute()
+client.table(name).delete().eq(...).execute()
+```
+
+**Quy tắc:**
+
+- in-memory `dict[str, list[dict]]`, isolated mỗi test (fixture `fake_db`);
+- auto-gen `id`, `created_at`, `updated_at` (cho `users`), `accepted_at` (cho `consent_records`) khi insert nếu chưa có;
+- op không support → `raise NotImplementedError(...)` để khi codebase thêm method mới (vd `.in_()`, `.range()`), test fail loud thay vì pass giả.
+
+**Helper test:**
+
+```python
+make_user_row(role=UserRole.DOCTOR, email="d@x.com", is_active=True, ...)
+→ dict đầy đủ shape mà UserResponse.model_validate cần (id, auth_user_id, email,
+  full_name, role, auth_provider, provider_user_id, avatar_url, is_active,
+  password_hash, created_at, updated_at)
+```
+
+#### 19.3.4 Test coverage matrix
+
+| File | Test | Cover gì |
+|------|------|----------|
+| `test_health.py` | health returns healthy status | api/health endpoint |
+| `test_security.py` | decode valid token | JWT decode happy path |
+|  | decode expired token raises Unauthorized | JWT exp validation |
+|  | require_roles allows member | RBAC happy path |
+|  | require_roles rejects non-member | RBAC reject + ForbiddenError message format |
+| `test_auth_service.py` | register creates user | local provider, hashed password |
+|  | register dup email raises AlreadyExists | email_exists branch |
+|  | login returns token | TokenResponse with embedded user |
+|  | login wrong password raises InvalidCredentials | verify_password branch |
+|  | login inactive user raises Unauthorized | is_active business rule |
+|  | **login missing password_hash raises DatabaseError** | regression guard cho PR #9 §19.2.2 |
+| `test_consent_service.py` | accept_consent writes record + audit with role | role propagation §19.2.4 |
+|  | get_status flips after accept | has_valid_consent logic |
+| `test_audit_service.py` | **log_event persists role + sanitizes metadata** | regression guard cho PR #9 §19.2.4 |
+| `test_assignment_service.py` | create_assignment is idempotent | no duplicate row + no double audit log |
+|  | ensure_doctor_can_access_patient blocks unassigned | RBAC business logic |
+
+**Regression guards quan trọng** (in đậm) đảm bảo nếu tương lai có ai revert PR #9 hoặc đổi behavior, test sẽ fail.
+
+#### 19.3.5 Verification
+
+```bash
+cd backend && uv run pytest -v
+# → 16 passed in 2.59s
+
+make check
+# uv run ruff check . → All checks passed!
+# uv run mypy .       → Success: no issues found in 35 source files
+```
+
+> `tests/` đã được exclude khỏi mypy theo config sẵn có (`pyproject.toml` root) nên không bị type-strict, nhưng vẫn bị ruff lint (E + F + I).
+
+### 19.4 Bài học mới
+
+#### 19.4.1 Refactor có audit thường tốt hơn refactor không có audit
+
+Cả 6 hạn chế ở §19.1 đều là **chi tiết nhỏ** — code vẫn chạy đúng smoke test. Nhưng tích lũy lại:
+
+- DRY violation gốc khiến mỗi lần đổi format Supabase response phải sửa 4 chỗ;
+- `UnauthorizedError` cho lỗi DB column khiến error message ngoài API gây hiểu nhầm;
+- thiếu role ở audit khiến milestone sau (clinical dashboard) phải làm migration ngược.
+
+Việc audit trước khi sang phase mới giúp xác định **debt là gì** thay vì để nó nổi lên ở Milestone 4 lúc đang vội.
+
+#### 19.4.2 FakeSupabase là một interface contract — không phải mock toàn bộ
+
+Không cố mimic toàn bộ supabase-py. Chỉ mimic **đúng các method codebase dùng**, và **fail loud** khi gặp method chưa support. Khi codebase thêm method mới (`.in_()`, `.range()`, RPC, …), test sẽ fail rõ ràng → buộc phải bổ sung fake hoặc dùng integration test.
+
+#### 19.4.3 Regression guard quan trọng hơn coverage number
+
+Trong 16 test, 2 test in đậm ở §19.3.4 (`login missing password_hash → DatabaseError`, `log_event persists role`) là **regression guard** trực tiếp cho PR #9. Coverage có thể chỉ ~70% nhưng giá trị thật của test suite nằm ở mỗi test có 1 lý do tồn tại rõ ràng — không phải con số.
+
+#### 19.4.4 Sequential PR strategy giúp review dễ hơn
+
+Thay vì gộp refactor + tests vào 1 PR khổng lồ (~700 dòng test + ~200 dòng refactor), tách:
+
+- PR #9: chỉ refactor (~12 file, +57/-135 dòng) — review focus vào logic change.
+- PR #10: chỉ tests (~9 file, +702 dòng) — review focus vào test design + FakeSupabase contract.
+
+Khi PR #9 merge trước, test trong PR #10 mới có lý do tồn tại (regression guard cho refactor đã land). Ngược lại sẽ confusing.
