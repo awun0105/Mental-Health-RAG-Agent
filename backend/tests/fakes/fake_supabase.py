@@ -8,14 +8,21 @@ repositories in this codebase, namely:
     client.table(name).update(data).eq(...).execute()
     client.table(name).delete().eq(...).execute()
 
-It is **not** a full reimplementation of supabase-py. If a repository
-starts using a method that this fake does not support, the call will
-raise ``NotImplementedError`` so the gap is visible immediately.
+It also exposes a small ``auth`` stub that mirrors the two methods used
+by ``AuthService`` for Google OAuth:
+
+    client.auth.sign_in_with_oauth({"provider": "google", "options": {...}})
+    client.auth.exchange_code_for_session({"auth_code": "..."})
+
+It is **not** a full reimplementation of supabase-py. If a repository or
+service starts using a method that this fake does not support, the call
+will raise ``NotImplementedError`` so the gap is visible immediately.
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -144,16 +151,81 @@ class _FakeQuery:
         return _FakeResult(removed)
 
 
+@dataclass
+class _FakeSupabaseUser:
+    """Minimal stand-in for the ``user`` object on ``AuthResponse``."""
+
+    id: str
+    email: str
+    user_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class _FakeOAuthResponse:
+    """Stand-in for the response of ``auth.sign_in_with_oauth``."""
+
+    url: str
+    provider: str = "google"
+
+
+@dataclass
+class _FakeAuthResponse:
+    """Stand-in for the response of ``auth.exchange_code_for_session``.
+
+    Only the ``user`` attribute is consumed by ``AuthService``.
+    """
+
+    user: _FakeSupabaseUser
+
+
+class _FakeSupabaseAuth:
+    """Stub of ``client.auth`` exposing only the methods we use.
+
+    Tests configure the stub by setting ``next_oauth_url`` (returned by
+    ``sign_in_with_oauth``) and ``next_callback_user`` (returned by
+    ``exchange_code_for_session``). To simulate a Supabase failure, set
+    ``exchange_should_fail = True`` so the call raises ``RuntimeError``.
+
+    This intentionally does NOT validate the input dict shape — that
+    contract belongs to the real client; tests only need the response
+    side mocked deterministically.
+    """
+
+    def __init__(self) -> None:
+        self.next_oauth_url: str = "https://accounts.google.com/o/oauth2/auth?fake"
+        self.next_callback_user: _FakeSupabaseUser | None = None
+        self.exchange_should_fail: bool = False
+        self.last_oauth_options: dict[str, Any] | None = None
+        self.last_exchange_code: str | None = None
+
+    def sign_in_with_oauth(self, credentials: dict[str, Any]) -> _FakeOAuthResponse:
+        self.last_oauth_options = credentials.get("options")
+        return _FakeOAuthResponse(url=self.next_oauth_url)
+
+    def exchange_code_for_session(self, params: dict[str, Any]) -> _FakeAuthResponse:
+        self.last_exchange_code = params.get("auth_code")
+        if self.exchange_should_fail:
+            raise RuntimeError("Fake Supabase: exchange_code_for_session forced failure")
+        if self.next_callback_user is None:
+            raise RuntimeError(
+                "Fake Supabase: no callback user configured. Set "
+                "fake_db.auth.next_callback_user before calling.",
+            )
+        return _FakeAuthResponse(user=self.next_callback_user)
+
+
 class FakeSupabase:
     """In-memory Supabase stand-in.
 
-    Repositories accept a ``supabase.Client``; ``FakeSupabase`` only needs
-    to expose ``.table(name)``, so it can be passed in at construction
-    time. Tests get a clean, isolated store per fixture invocation.
+    Repositories accept a ``supabase.Client``; ``FakeSupabase`` exposes
+    ``.table(name)`` for repository chains and ``.auth`` for the two
+    OAuth methods used by ``AuthService``. Tests get a clean, isolated
+    store per fixture invocation.
     """
 
     def __init__(self) -> None:
         self.tables: dict[str, list[dict[str, Any]]] = {}
+        self.auth: _FakeSupabaseAuth = _FakeSupabaseAuth()
 
     def table(self, name: str) -> _FakeQuery:
         return _FakeQuery(self, name)
@@ -165,3 +237,29 @@ class FakeSupabase:
     def all_rows(self, name: str) -> list[dict[str, Any]]:
         """Return a copy of all rows in a table (for assertions)."""
         return [deepcopy(r) for r in self.tables.get(name, [])]
+
+
+def make_fake_supabase_user(
+    *,
+    user_id: str | None = None,
+    email: str = "google-user@example.com",
+    full_name: str = "Google User",
+    avatar_url: str | None = "https://example.com/avatar.png",
+    extra_metadata: dict[str, Any] | None = None,
+) -> _FakeSupabaseUser:
+    """Helper for building a Supabase user object as Google would return it."""
+    metadata: dict[str, Any] = {
+        "full_name": full_name,
+        "name": full_name,
+        "email": email,
+    }
+    if avatar_url is not None:
+        metadata["avatar_url"] = avatar_url
+        metadata["picture"] = avatar_url
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return _FakeSupabaseUser(
+        id=user_id or str(uuid4()),
+        email=email,
+        user_metadata=metadata,
+    )

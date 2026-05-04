@@ -59,8 +59,25 @@ def audit_service(audit_repo: AuditRepository) -> AuditService:
 
 
 @pytest.fixture
-def auth_service(user_repo: UserRepository) -> AuthService:
-    return AuthService(user_repo=user_repo)
+def auth_service(
+    user_repo: UserRepository,
+    fake_db: FakeSupabase,
+    audit_service: AuditService,
+) -> AuthService:
+    """AuthService wired with the in-memory FakeSupabase and a real audit service.
+
+    AuthService now depends on the supabase Client (for the Google OAuth
+    proxy methods) and on AuditService (for ``USER_LOGIN`` /
+    ``USER_REGISTERED`` log events). The class-level
+    ``_pending_tokens`` store is cleared per test so tokens minted in
+    one test cannot leak into another.
+    """
+    AuthService._pending_tokens.clear()
+    return AuthService(
+        user_repo=user_repo,
+        supabase=cast(Client, fake_db),
+        audit_service=audit_service,
+    )
 
 
 @pytest.fixture
@@ -147,10 +164,16 @@ def client(fake_db: FakeSupabase) -> Iterator[TestClient]:
 
     The `fake_db` fixture is shared with the same test, so seeding rows in
     `fake_db` is visible from inside the API call's repo lookups.
+
+    ``AuthService._pending_tokens`` is a class-level dict shared across
+    request-scoped instances, so it is cleared per test to prevent
+    tokens minted by one test from leaking into another.
     """
+    AuthService._pending_tokens.clear()
     app.dependency_overrides[get_supabase] = lambda: fake_db
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.pop(get_supabase, None)
+        AuthService._pending_tokens.clear()

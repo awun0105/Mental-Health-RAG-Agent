@@ -1,0 +1,221 @@
+"""Service-level tests for the Google OAuth flow on AuthService.
+
+These tests exercise the three new methods added in task DB-2.27 step A:
+
+* ``get_google_oauth_url`` — wraps Supabase's OAuth proxy.
+* ``handle_google_callback`` — exchanges a Supabase auth code, looks up
+  or creates the application user, and stores the JWT under a one-time
+  auth code.
+* ``exchange_auth_code`` — trades the one-time auth code for the JWT.
+
+The Verify-first account-linking policy is exercised here as well: a
+Google login arriving for an email that already has a local password
+account must be rejected so an attacker cannot take over the account by
+controlling the matching Google address.
+"""
+
+from __future__ import annotations
+
+import pytest
+from app.core.config import settings
+from app.core.constants import AuditAction, AuthProvider, UserRole
+from app.core.exceptions import AlreadyExistsError, UnauthorizedError
+from app.services.auth_service import AuthService
+from jose import jwt
+
+from tests.conftest import make_user_row
+from tests.fakes.fake_supabase import FakeSupabase, make_fake_supabase_user
+
+
+def test_get_google_oauth_url_returns_supabase_url(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """``get_google_oauth_url`` returns the URL the Supabase stub gave us."""
+    fake_db.auth.next_oauth_url = "https://accounts.google.com/o/oauth2/auth?test=1"
+
+    url = auth_service.get_google_oauth_url()
+
+    assert url == "https://accounts.google.com/o/oauth2/auth?test=1"
+    assert fake_db.auth.last_oauth_options is not None
+    assert "redirect_to" in fake_db.auth.last_oauth_options
+    assert fake_db.auth.last_oauth_options["redirect_to"].endswith(
+        "/api/v1/auth/google/callback",
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_creates_new_patient_for_unknown_email(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """An unknown Google email becomes a new patient + USER_REGISTERED audit."""
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-001",
+        email="newuser@example.com",
+        full_name="New Google User",
+    )
+
+    auth_code, user_name = await auth_service.handle_google_callback("supabase-code")
+
+    assert isinstance(auth_code, str) and auth_code
+    assert user_name == "New Google User"
+
+    users = fake_db.all_rows("users")
+    assert len(users) == 1
+    created = users[0]
+    assert created["email"] == "newuser@example.com"
+    assert created["auth_provider"] == AuthProvider.GOOGLE.value
+    assert created["provider_user_id"] == "google-sub-001"
+    assert created["role"] == UserRole.PATIENT.value
+    assert created["password_hash"] is None
+
+    audits = fake_db.all_rows("audit_logs")
+    actions = [a["action"] for a in audits]
+    assert AuditAction.USER_REGISTERED.value in actions
+    assert AuditAction.USER_LOGIN.value in actions
+    login_event = next(a for a in audits if a["action"] == AuditAction.USER_LOGIN.value)
+    assert login_event["metadata"] == {"method": "google"}
+    assert login_event["role"] == UserRole.PATIENT.value
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_reuses_existing_google_user(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """A returning Google user reuses their existing row and only logs USER_LOGIN."""
+    existing = make_user_row(
+        role=UserRole.PATIENT,
+        email="returning@example.com",
+        full_name="Returning User",
+        auth_provider=AuthProvider.GOOGLE,
+        password_hash="",  # Google users have no password hash
+    )
+    existing["provider_user_id"] = "google-sub-002"
+    fake_db.seed("users", [existing])
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-002",
+        email="returning@example.com",
+        full_name="Returning User",
+    )
+
+    auth_code, user_name = await auth_service.handle_google_callback("any-code")
+
+    assert auth_code
+    assert user_name == "Returning User"
+    # The repo must NOT create a duplicate row for an existing Google identity.
+    assert len(fake_db.all_rows("users")) == 1
+
+    audits = fake_db.all_rows("audit_logs")
+    actions = [a["action"] for a in audits]
+    assert AuditAction.USER_REGISTERED.value not in actions
+    assert actions.count(AuditAction.USER_LOGIN.value) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_rejects_email_owned_by_local_account(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """Verify-first: reject Google login when email belongs to a local password account."""
+    fake_db.seed(
+        "users",
+        [
+            make_user_row(
+                role=UserRole.PATIENT,
+                email="conflict@example.com",
+                full_name="Local Account",
+                auth_provider=AuthProvider.LOCAL,
+            ),
+        ],
+    )
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-003",
+        email="conflict@example.com",
+    )
+
+    with pytest.raises(AlreadyExistsError) as excinfo:
+        await auth_service.handle_google_callback("any-code")
+
+    # The error message must steer the user toward password login + manual link,
+    # not silently take over the existing account.
+    assert "log in with password" in excinfo.value.message
+    assert excinfo.value.status_code == 409
+
+    # No user was created and no successful login was logged.
+    users = fake_db.all_rows("users")
+    assert len(users) == 1
+    assert users[0]["auth_provider"] == AuthProvider.LOCAL.value
+    audits = fake_db.all_rows("audit_logs")
+    assert AuditAction.USER_LOGIN.value not in [a["action"] for a in audits]
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_rejects_existing_google_email_with_different_sub(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """Defensive: same email already linked to a different Google sub must be rejected."""
+    existing = make_user_row(
+        role=UserRole.PATIENT,
+        email="taken@example.com",
+        auth_provider=AuthProvider.GOOGLE,
+        password_hash="",
+    )
+    existing["provider_user_id"] = "google-sub-original"
+    fake_db.seed("users", [existing])
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-imposter",
+        email="taken@example.com",
+    )
+
+    with pytest.raises(AlreadyExistsError):
+        await auth_service.handle_google_callback("any-code")
+
+    assert len(fake_db.all_rows("users")) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_wraps_supabase_failure(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """A failing Supabase exchange surfaces as UnauthorizedError, not a raw 500."""
+    fake_db.auth.exchange_should_fail = True
+
+    with pytest.raises(UnauthorizedError):
+        await auth_service.handle_google_callback("doesnt-matter")
+
+
+@pytest.mark.asyncio
+async def test_exchange_auth_code_returns_token_once(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """The auth code is single-use: the second exchange must fail."""
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-once",
+        email="once@example.com",
+    )
+    auth_code, _ = await auth_service.handle_google_callback("supabase-code")
+
+    token_response = auth_service.exchange_auth_code(auth_code)
+
+    decoded = jwt.decode(
+        token_response.access_token,
+        settings.jwt_secret_key,
+        algorithms=[settings.jwt_algorithm],
+    )
+    assert decoded["email"] == "once@example.com"
+    assert decoded["role"] == UserRole.PATIENT.value
+    assert token_response.user.email == "once@example.com"
+
+    with pytest.raises(UnauthorizedError):
+        auth_service.exchange_auth_code(auth_code)
+
+
+def test_exchange_auth_code_rejects_unknown_code(auth_service: AuthService) -> None:
+    """An auth code never minted by ``handle_google_callback`` is rejected."""
+    with pytest.raises(UnauthorizedError):
+        auth_service.exchange_auth_code("never-minted")
