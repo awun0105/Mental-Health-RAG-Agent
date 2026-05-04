@@ -6,12 +6,32 @@ from app.core.constants import AuthProvider, UserRole
 
 
 class UserCreate(BaseModel):
-    """Request schema for local email/password user registration."""
+    """Internal schema for creating any application user.
+
+    This schema is used by privileged code paths (admin user provisioning,
+    OAuth user creation) where the role is chosen by the caller, not by
+    the end user. Public self-registration must NOT use this schema; it
+    must use ``PublicUserRegister`` which has no ``role`` field.
+    """
 
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=1, max_length=255)
     role: UserRole = UserRole.PATIENT
+
+
+class PublicUserRegister(BaseModel):
+    """Public self-registration schema for the ``/auth/register`` endpoint.
+
+    Only patients may self-register. Doctor and admin accounts must be
+    provisioned through admin-only flows (out of scope for this schema).
+    The ``role`` field is intentionally absent to prevent privilege
+    escalation via the public endpoint.
+    """
+
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str = Field(min_length=1, max_length=255)
 
 
 class UserLogin(BaseModel):

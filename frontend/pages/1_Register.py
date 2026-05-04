@@ -1,4 +1,9 @@
-"""Register a new local email/password account."""
+"""Register a new local email/password patient account.
+
+Public self-registration is patient-only. Doctor and admin accounts are
+provisioned by an administrator through privileged flows; the role is
+fixed at the backend regardless of any value the form might send.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,10 @@ from api_client import BackendError, register
 
 st.set_page_config(page_title="Register", page_icon="🆕")
 st.title("Đăng ký tài khoản")
+st.caption(
+    "Tài khoản tự đăng ký luôn có vai trò **patient**. "
+    "Tài khoản **doctor** / **admin** do quản trị viên tạo riêng.",
+)
 
 with st.form("register_form", clear_on_submit=False):
     email = st.text_input("Email")
@@ -15,15 +24,6 @@ with st.form("register_form", clear_on_submit=False):
         "Mật khẩu (≥ 8 ký tự)",
         type="password",
         help="Mật khẩu phải có ít nhất 8 ký tự, tối đa 128 ký tự.",
-    )
-    role = st.selectbox(
-        "Vai trò",
-        options=["patient", "doctor", "admin"],
-        index=0,
-        help=(
-            "Bình thường người dùng cuối chọn `patient`. `doctor` và `admin` thường "
-            "do quản trị viên tạo trực tiếp."
-        ),
     )
     submitted = st.form_submit_button("Đăng ký")
 
@@ -38,7 +38,6 @@ if submitted:
                 email=email,
                 password=password,
                 full_name=full_name,
-                role=role,
             )
         except BackendError as exc:
             if exc.status_code == 409:
