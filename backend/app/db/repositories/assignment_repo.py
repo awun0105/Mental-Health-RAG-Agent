@@ -78,7 +78,7 @@ class AssignmentRepository(BaseRepository[AssignmentResponse]):
                 .select("*")
                 .eq("doctor_id", doctor_id)
                 .eq("is_active", True)
-                .order("assigned_at", desc=True)
+                .order("created_at", desc=True)
                 .execute()
             )
         except Exception as exc:
@@ -97,7 +97,7 @@ class AssignmentRepository(BaseRepository[AssignmentResponse]):
                 .select("*")
                 .eq("patient_id", patient_id)
                 .eq("is_active", True)
-                .order("assigned_at", desc=True)
+                .order("created_at", desc=True)
                 .execute()
             )
         except Exception as exc:
