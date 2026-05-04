@@ -68,16 +68,19 @@ def register(
     email: str,
     password: str,
     full_name: str,
-    role: str,
 ) -> dict[str, Any]:
-    """POST /api/v1/auth/register — create a local email/password user."""
+    """POST /api/v1/auth/register — create a local email/password patient.
+
+    Public self-registration is patient-only; doctor and admin accounts are
+    provisioned by admins through privileged flows. The backend ignores any
+    ``role`` field in this body and always assigns ``patient``.
+    """
     response = requests.post(
         _url("/auth/register"),
         json={
             "email": email,
             "password": password,
             "full_name": full_name,
-            "role": role,
         },
         timeout=DEFAULT_TIMEOUT_SECONDS,
     )

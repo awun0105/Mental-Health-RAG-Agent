@@ -3,8 +3,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies import get_auth_service, get_current_user
+from app.core.constants import UserRole
 from app.core.security import CurrentUserClaims
-from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
+from app.schemas.user import (
+    PublicUserRegister,
+    TokenResponse,
+    UserCreate,
+    UserLogin,
+    UserResponse,
+)
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -12,11 +19,22 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register", response_model=UserResponse)
 async def register(
-    payload: UserCreate,
+    payload: PublicUserRegister,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> UserResponse:
-    """Register a local email/password user."""
-    return await auth_service.register(payload)
+    """Register a new patient via public self-registration.
+
+    Only patients may self-register through this endpoint. Doctor and admin
+    accounts are provisioned through privileged admin flows so this endpoint
+    cannot be used to escalate privileges by passing ``role`` in the body.
+    """
+    user_data = UserCreate(
+        email=payload.email,
+        password=payload.password,
+        full_name=payload.full_name,
+        role=UserRole.PATIENT,
+    )
+    return await auth_service.register(user_data)
 
 
 @router.post("/login", response_model=TokenResponse)

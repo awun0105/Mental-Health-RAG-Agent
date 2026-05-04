@@ -18,13 +18,16 @@ def _register_payload(
     email: str = "alice@example.com",
     password: str = "correct horse battery staple",
     full_name: str = "Alice Example",
-    role: UserRole = UserRole.PATIENT,
 ) -> dict[str, object]:
+    """Build the public registration body. ``role`` is intentionally absent.
+
+    Public self-registration is patient-only at the backend; doctor and
+    admin roles are not selectable through this endpoint.
+    """
     return {
         "email": email,
         "password": password,
         "full_name": full_name,
-        "role": role.value,
     }
 
 
@@ -37,6 +40,40 @@ def test_register_returns_user_response(client: TestClient) -> None:
     assert body["email"] == "alice@example.com"
     assert body["role"] == "patient"
     assert "password_hash" not in body
+
+
+def test_register_ignores_role_field_for_admin_escalation(client: TestClient) -> None:
+    """Sending ``role=admin`` in the body must NOT escalate the new user.
+
+    Public self-registration is patient-only. Pydantic drops unknown fields
+    on ``PublicUserRegister``, and the route hard-codes ``role=patient``
+    before delegating to the service. Both layers must agree that no value
+    in the body can result in an admin or doctor account.
+    """
+    payload = {
+        **_register_payload(email="evil@example.com"),
+        "role": "admin",
+    }
+    response = client.post("/api/v1/auth/register", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["role"] == "patient", (
+        "Public /auth/register must always create patients, even when the "
+        f"client passes role=admin in the body. Got role={body['role']!r}."
+    )
+
+
+def test_register_ignores_role_field_for_doctor_escalation(client: TestClient) -> None:
+    """Same guard for ``role=doctor`` — must downgrade silently to patient."""
+    payload = {
+        **_register_payload(email="fakedoc@example.com"),
+        "role": "doctor",
+    }
+    response = client.post("/api/v1/auth/register", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "patient"
 
 
 def test_register_duplicate_email_returns_409(client: TestClient) -> None:
