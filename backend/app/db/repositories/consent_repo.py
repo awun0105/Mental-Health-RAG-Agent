@@ -1,10 +1,9 @@
 from collections.abc import Mapping
-from typing import cast
 
 from supabase import Client
 
 from app.core.exceptions import DatabaseError
-from app.db.repositories.base import BaseRepository, JSONRow, JSONValue
+from app.db.repositories.base import BaseRepository, JSONValue
 from app.schemas.consent import ConsentResponse
 
 
@@ -17,18 +16,6 @@ class ConsentRepository(BaseRepository[ConsentResponse]):
     def _to_model(self, row: Mapping[str, JSONValue]) -> ConsentResponse:
         """Convert a raw consent_records row into a response model."""
         return ConsentResponse.model_validate(dict(row))
-
-    def _rows(self, data: object) -> list[JSONRow]:
-        """Convert a Supabase response payload into a list of JSON rows."""
-        if not isinstance(data, list):
-            return []
-
-        rows: list[JSONRow] = []
-        for item in data:
-            if isinstance(item, dict):
-                rows.append(cast(JSONRow, item))
-
-        return rows
 
     async def get_latest_by_user(self, user_id: str) -> ConsentResponse | None:
         """Return the most recent consent record for a user."""

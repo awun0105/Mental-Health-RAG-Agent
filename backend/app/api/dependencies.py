@@ -11,6 +11,7 @@ from app.core.security import (
     require_admin,
     require_doctor,
     require_patient,
+    require_roles,
 )
 from app.db.repositories.assignment_repo import AssignmentRepository
 from app.db.repositories.audit_repo import AuditRepository
@@ -134,18 +135,5 @@ def require_current_doctor_or_admin(
     current_user: Annotated[CurrentUserClaims, Depends(get_current_user)],
 ) -> CurrentUserClaims:
     """Require current user to be a doctor or admin."""
-    if current_user.role not in {UserRole.DOCTOR, UserRole.ADMIN}:
-        allowed_roles = ", ".join(
-            sorted(
-                role.value
-                for role in {
-                    UserRole.DOCTOR,
-                    UserRole.ADMIN,
-                }
-            ),
-        )
-        from app.core.exceptions import ForbiddenError
-
-        raise ForbiddenError(f"Requires one of these roles: {allowed_roles}")
-
+    require_roles(current_user, {UserRole.DOCTOR, UserRole.ADMIN})
     return current_user

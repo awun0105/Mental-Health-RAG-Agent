@@ -34,6 +34,7 @@ async def create_assignment(
     return await assignment_service.create_assignment(
         payload=payload,
         assigned_by=current_user.user_id,
+        assigned_by_role=current_user.role.value,
         ip_address=request.client.host if request.client is not None else None,
     )
 
@@ -58,6 +59,7 @@ async def deactivate_assignment(
     return await assignment_service.deactivate_assignment(
         assignment_id=assignment_id,
         deactivated_by=current_user.user_id,
+        deactivated_by_role=current_user.role.value,
         ip_address=request.client.host if request.client is not None else None,
     )
 

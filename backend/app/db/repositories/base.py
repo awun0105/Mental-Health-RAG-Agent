@@ -36,6 +36,22 @@ class BaseRepository(ABC, Generic[ModelT]):
 
         return cast(JSONRow, first_item)
 
+    def _rows(self, data: object) -> list[JSONRow]:
+        """Return all rows from a Supabase response payload.
+
+        Returns an empty list when the payload is missing or malformed,
+        so callers can iterate safely without nil-checks.
+        """
+        if not isinstance(data, list):
+            return []
+
+        rows: list[JSONRow] = []
+        for item in data:
+            if isinstance(item, dict):
+                rows.append(cast(JSONRow, item))
+
+        return rows
+
     async def get_by_id(self, record_id: str) -> ModelT | None:
         """Fetch one record by primary key."""
         try:

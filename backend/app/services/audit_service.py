@@ -16,6 +16,7 @@ class AuditService:
         *,
         user_id: str | None,
         action: AuditAction,
+        role: str | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -24,6 +25,11 @@ class AuditService:
         """Create an audit log entry.
 
         This method should be the only way to write audit logs.
+
+        ``role`` is the role of the actor at the time of the event
+        (``patient``, ``doctor``, ``admin``, ``system`` or ``None``).
+        It is recorded alongside ``user_id`` so that downstream dashboards
+        can filter audit events by role without joining ``users``.
         """
 
         safe_metadata: dict[str, JSONValue] | None = None
@@ -32,6 +38,7 @@ class AuditService:
 
         data: JSONRow = {
             "user_id": user_id,
+            "role": role,
             "action": action.value,
             "resource_type": resource_type,
             "resource_id": resource_id,

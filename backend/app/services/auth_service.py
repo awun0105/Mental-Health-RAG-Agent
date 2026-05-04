@@ -2,11 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 from jose import jwt
 from passlib.context import CryptContext
+from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.constants import AuthProvider, UserRole
+from app.core.constants import AuthProvider
 from app.core.exceptions import (
     AlreadyExistsError,
+    DatabaseError,
     InvalidCredentialsError,
     UnauthorizedError,
 )
@@ -48,14 +50,16 @@ class AuthService:
         if user_row is None:
             raise InvalidCredentialsError()
 
-        password_hash = self._get_required_string(
-            row=user_row,
-            field_name="password_hash",
-        )
+        password_hash = user_row.get("password_hash")
+        if not isinstance(password_hash, str) or not password_hash:
+            raise DatabaseError("User row missing password_hash")
+
         if not self.verify_password(payload.password, password_hash):
             raise InvalidCredentialsError()
 
-        is_active = self._get_required_bool(row=user_row, field_name="is_active")
+        is_active = user_row.get("is_active")
+        if not isinstance(is_active, bool):
+            raise DatabaseError("User row missing is_active")
         if not is_active:
             raise UnauthorizedError("User account is inactive")
 
@@ -108,63 +112,13 @@ class AuthService:
         )
 
     def _row_to_user_response(self, row: JSONRow) -> UserResponse:
-        """Convert a raw users row into a public user response."""
-        return UserResponse(
-            id=self._get_required_string(row=row, field_name="id"),
-            auth_user_id=self._get_optional_string(
-                row=row,
-                field_name="auth_user_id",
-            ),
-            email=self._get_required_string(row=row, field_name="email"),
-            full_name=self._get_required_string(row=row, field_name="full_name"),
-            role=UserRole(self._get_required_string(row=row, field_name="role")),
-            auth_provider=AuthProvider(
-                self._get_required_string(row=row, field_name="auth_provider"),
-            ),
-            provider_user_id=self._get_optional_string(
-                row=row,
-                field_name="provider_user_id",
-            ),
-            avatar_url=self._get_optional_string(row=row, field_name="avatar_url"),
-            is_active=self._get_required_bool(row=row, field_name="is_active"),
-            created_at=self._get_required_datetime(row=row, field_name="created_at"),
-            updated_at=self._get_required_datetime(row=row, field_name="updated_at"),
-        )
+        """Convert a raw users row into a public user response.
 
-    def _get_required_string(self, row: JSONRow, field_name: str) -> str:
-        """Return a required string field from a JSON row."""
-        value = row.get(field_name)
-        if not isinstance(value, str) or not value:
-            raise UnauthorizedError(f"Missing or invalid field: {field_name}")
-
-        return value
-
-    def _get_optional_string(self, row: JSONRow, field_name: str) -> str | None:
-        """Return an optional string field from a JSON row."""
-        value = row.get(field_name)
-        if value is None:
-            return None
-
-        if not isinstance(value, str):
-            raise UnauthorizedError(f"Invalid field: {field_name}")
-
-        return value
-
-    def _get_required_bool(self, row: JSONRow, field_name: str) -> bool:
-        """Return a required boolean field from a JSON row."""
-        value = row.get(field_name)
-        if not isinstance(value, bool):
-            raise UnauthorizedError(f"Missing or invalid field: {field_name}")
-
-        return value
-
-    def _get_required_datetime(self, row: JSONRow, field_name: str) -> datetime:
-        """Return a required datetime field from a JSON row."""
-        value = row.get(field_name)
-        if isinstance(value, datetime):
-            return value
-
-        if isinstance(value, str):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-        raise UnauthorizedError(f"Missing or invalid field: {field_name}")
+        Wraps Pydantic validation errors as DatabaseError so a malformed
+        row from Supabase surfaces as a 500 with a clear message instead
+        of a raw validation traceback.
+        """
+        try:
+            return UserResponse.model_validate(dict(row))
+        except ValidationError as exc:
+            raise DatabaseError("Invalid user row shape") from exc
