@@ -25,6 +25,7 @@ class ConsentService:
         self,
         user_id: str,
         payload: ConsentAcceptRequest,
+        role: str,
         ip_address: str | None = None,
     ) -> ConsentResponse:
         """Accept a consent policy version for a user."""
@@ -38,6 +39,7 @@ class ConsentService:
 
         await self._audit_service.log_event(
             user_id=user_id,
+            role=role,
             action=AuditAction.CONSENT_ACCEPTED,
             resource_type="consent_record",
             resource_id=consent.id,

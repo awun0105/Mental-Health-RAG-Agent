@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from typing import cast
 
 from supabase import Client
 
@@ -21,18 +20,6 @@ class UserRepository(BaseRepository[UserResponse]):
     def _to_model(self, row: Mapping[str, JSONValue]) -> UserResponse:
         """Convert a raw users row into a public user response model."""
         return UserResponse.model_validate(dict(row))
-
-    def _rows(self, data: object) -> list[JSONRow]:
-        """Convert a Supabase response payload into a list of JSON rows."""
-        if not isinstance(data, list):
-            return []
-
-        rows: list[JSONRow] = []
-        for item in data:
-            if isinstance(item, dict):
-                rows.append(cast(JSONRow, item))
-
-        return rows
 
     async def get_by_email(self, email: str) -> JSONRow | None:
         """Fetch raw user data by email.

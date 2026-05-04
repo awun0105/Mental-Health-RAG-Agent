@@ -25,6 +25,7 @@ async def accept_consent(
     return await consent_service.accept_consent(
         user_id=current_user.user_id,
         payload=payload,
+        role=current_user.role.value,
         ip_address=request.client.host if request.client is not None else None,
     )
 

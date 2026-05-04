@@ -24,6 +24,7 @@ class AssignmentService:
         self,
         payload: AssignmentCreateRequest,
         assigned_by: str,
+        assigned_by_role: str,
         ip_address: str | None = None,
     ) -> AssignmentResponse:
         """Create a doctor-patient assignment."""
@@ -59,6 +60,7 @@ class AssignmentService:
 
         await self._audit_service.log_event(
             user_id=assigned_by,
+            role=assigned_by_role,
             action=AuditAction.DOCTOR_ASSIGNMENT_CREATED,
             resource_type="doctor_assignment",
             resource_id=assignment.id,
@@ -75,6 +77,7 @@ class AssignmentService:
         self,
         assignment_id: str,
         deactivated_by: str,
+        deactivated_by_role: str,
         ip_address: str | None = None,
     ) -> AssignmentResponse:
         """Deactivate a doctor-patient assignment."""
@@ -87,6 +90,7 @@ class AssignmentService:
 
         await self._audit_service.log_event(
             user_id=deactivated_by,
+            role=deactivated_by_role,
             action=AuditAction.ASSIGNMENT_DEACTIVATED,
             resource_type="doctor_assignment",
             resource_id=assignment.id,
