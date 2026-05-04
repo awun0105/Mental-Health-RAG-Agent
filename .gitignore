@@ -33,6 +33,7 @@ docs/_notes/*
 
 !docs/_notes/[1]setup_process.md
 !docs/_notes/[2]E2E_database_design_and_development_fit.md
+!docs/_notes/README.md
 
 *.md.backup
 
@@ -61,4 +62,6 @@ docs/.plan/*
 !docs/.plan/MASTER_PLAN.md
 !docs/.plan/MILESTONE1.md
 !docs/.plan/MILESTONE2.md
+!docs/.plan/README.md
+
 docs/checkpoints/*
