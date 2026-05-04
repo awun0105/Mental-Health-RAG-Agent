@@ -29,6 +29,7 @@ htmlcov/
 docs/_notes/*.backup
 docs/_notes/temp_*.md
 docs/_notes/[0]project_history.md
+docs/_notes/[3]E2E_database_design_and_development.md
 *.md.backup
 
 # ==========================================
@@ -47,6 +48,8 @@ Thumbs.db
 backend/data/raw/*
 backend/data/processed/*
 !backend/data/raw/.gitkeep
+!backend/data/processed/.gitkeep
+
 !backend/data/processed/.gitkeep
 
 GEMINI.md
