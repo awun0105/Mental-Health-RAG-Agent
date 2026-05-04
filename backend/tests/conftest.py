@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
 import pytest
+from app.api.dependencies import get_supabase
+from app.core.config import settings
 from app.core.constants import AuthProvider, UserRole
 from app.db.repositories.assignment_repo import AssignmentRepository
 from app.db.repositories.audit_repo import AuditRepository
 from app.db.repositories.consent_repo import ConsentRepository
 from app.db.repositories.user_repo import UserRepository
+from app.main import app
 from app.services.assignment_service import AssignmentService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.consent_service import ConsentService
+from fastapi.testclient import TestClient
+from jose import jwt
 from supabase import Client
 
 from tests.fakes.fake_supabase import FakeSupabase
@@ -104,3 +110,47 @@ def make_user_row(
         "created_at": now,
         "updated_at": now,
     }
+
+
+def make_token(
+    *,
+    user_id: str = "user-id-1",
+    email: str = "user@example.com",
+    role: UserRole = UserRole.PATIENT,
+    expires_in_seconds: int = 60,
+) -> str:
+    """Mint a signed JWT for API-layer tests, using the same secret as production."""
+    exp = int((datetime.now(UTC) + timedelta(seconds=expires_in_seconds)).timestamp())
+    payload = {"sub": user_id, "email": email, "role": role.value, "exp": exp}
+    return str(
+        jwt.encode(
+            payload,
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        ),
+    )
+
+
+def auth_headers(
+    *,
+    user_id: str = "user-id-1",
+    email: str = "user@example.com",
+    role: UserRole = UserRole.PATIENT,
+) -> dict[str, str]:
+    """Build a Bearer Authorization header for the given identity."""
+    return {"Authorization": f"Bearer {make_token(user_id=user_id, email=email, role=role)}"}
+
+
+@pytest.fixture
+def client(fake_db: FakeSupabase) -> Iterator[TestClient]:
+    """FastAPI TestClient with FakeSupabase wired into every repo via DI override.
+
+    The `fake_db` fixture is shared with the same test, so seeding rows in
+    `fake_db` is visible from inside the API call's repo lookups.
+    """
+    app.dependency_overrides[get_supabase] = lambda: fake_db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.pop(get_supabase, None)
