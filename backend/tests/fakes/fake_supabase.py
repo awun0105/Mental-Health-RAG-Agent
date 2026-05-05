@@ -4,6 +4,7 @@ This intentionally implements only the chain API actually used by the
 repositories in this codebase, namely:
 
     client.table(name).select(...).eq(...).order(...).limit(...).execute()
+    client.table(name).select(...).eq(...).order(...).range(start, end).execute()
     client.table(name).insert(data).execute()
     client.table(name).update(data).eq(...).execute()
     client.table(name).delete().eq(...).execute()
@@ -46,6 +47,7 @@ class _FakeQuery:
         self._order_col: str | None = None
         self._order_desc: bool = False
         self._limit: int | None = None
+        self._range: tuple[int, int] | None = None
         self._payload: dict[str, Any] | None = None
 
     def select(self, *_cols: str) -> _FakeQuery:
@@ -79,6 +81,11 @@ class _FakeQuery:
         self._limit = n
         return self
 
+    def range(self, start: int, end: int) -> _FakeQuery:
+        """Mirror ``postgrest`` inclusive ``range(start, end)`` pagination."""
+        self._range = (start, end)
+        return self
+
     def execute(self) -> _FakeResult:
         rows = self._store.tables.setdefault(self._table, [])
 
@@ -105,6 +112,9 @@ class _FakeQuery:
                 key=lambda r: r.get(order_col) or "",
                 reverse=self._order_desc,
             )
+        if self._range is not None:
+            start, end = self._range
+            filtered = filtered[start : end + 1]
         if self._limit is not None:
             filtered = filtered[: self._limit]
         return _FakeResult([deepcopy(r) for r in filtered])
@@ -122,6 +132,15 @@ class _FakeQuery:
             row.setdefault("updated_at", now)
         if self._table == "consent_records":
             row.setdefault("accepted_at", now)
+        if self._table == "chat_sessions":
+            row.setdefault("started_at", now)
+            row.setdefault("status", "active")
+            row.setdefault("metadata", {})
+            row.setdefault("ended_at", None)
+        if self._table == "chat_messages":
+            row.setdefault("safety_flag", False)
+            row.setdefault("safety_severity", "none")
+            row.setdefault("trace_id", None)
 
         rows.append(row)
         return _FakeResult([deepcopy(row)])

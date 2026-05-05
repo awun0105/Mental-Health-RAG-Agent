@@ -16,12 +16,15 @@ from app.core.security import (
 from app.db.repositories.assignment_repo import AssignmentRepository
 from app.db.repositories.audit_repo import AuditRepository
 from app.db.repositories.consent_repo import ConsentRepository
+from app.db.repositories.message_repo import MessageRepository
+from app.db.repositories.session_repo import SessionRepository
 from app.db.repositories.user_repo import UserRepository
 from app.db.supabase_client import get_supabase_client
 from app.services.assignment_service import AssignmentService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.consent_service import ConsentService
+from app.services.session_service import SessionService
 
 bearer_scheme = HTTPBearer(auto_error=True)
 
@@ -57,6 +60,20 @@ def get_assignment_repo(
 ) -> AssignmentRepository:
     """Return an assignment repository instance."""
     return AssignmentRepository(db=db)
+
+
+def get_session_repo(
+    db: Annotated[Client, Depends(get_supabase)],
+) -> SessionRepository:
+    """Return a session repository instance."""
+    return SessionRepository(db=db)
+
+
+def get_message_repo(
+    db: Annotated[Client, Depends(get_supabase)],
+) -> MessageRepository:
+    """Return a message repository instance."""
+    return MessageRepository(db=db)
 
 
 def get_audit_service(
@@ -99,6 +116,21 @@ def get_assignment_service(
     return AssignmentService(
         assignment_repo=assignment_repo,
         user_repo=user_repo,
+        audit_service=audit_service,
+    )
+
+
+def get_session_service(
+    session_repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    consent_repo: Annotated[ConsentRepository, Depends(get_consent_repo)],
+    assignment_repo: Annotated[AssignmentRepository, Depends(get_assignment_repo)],
+    audit_service: Annotated[AuditService, Depends(get_audit_service)],
+) -> SessionService:
+    """Return a session service instance."""
+    return SessionService(
+        session_repo=session_repo,
+        consent_repo=consent_repo,
+        assignment_repo=assignment_repo,
         audit_service=audit_service,
     )
 
