@@ -261,70 +261,68 @@ async def test_handle_google_callback_rejects_returning_inactive_user(
 
 
 @pytest.mark.asyncio
-async def test_oauth_uses_ephemeral_client_so_db_state_is_isolated(
-    user_repo: object,
-    audit_service: object,
+async def test_handle_google_callback_resets_auth_state_after_exchange(
+    auth_service: AuthService,
     fake_db: FakeSupabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """OAuth calls must NOT pollute the shared service-role DB client.
+    """``handle_google_callback`` must reset the shared client to service_role.
 
     Regression for the live-Supabase ``42501 permission denied for
-    table users`` bug observed during the Google OAuth smoke test:
-    ``supabase-py`` keeps a single auth state per ``Client`` instance,
-    and ``auth.exchange_code_for_session`` swaps the client over to the
-    newly issued user JWT (role ``authenticated``). If the same client
-    is reused for ``db.table('users')`` reads afterwards, PostgREST
-    rejects the query because the user JWT does not have RLS
-    permissions on the ``users`` table.
+    table users`` bug observed during the Google OAuth smoke test on
+    the live project: ``supabase-py`` keeps a single auth state per
+    ``Client`` instance, and ``auth.exchange_code_for_session`` swaps
+    the client over to the newly issued user JWT (role
+    ``authenticated``). If the same client is reused for
+    ``db.table('users')`` reads afterwards, PostgREST rejects the
+    query because the user JWT does not have RLS permissions on the
+    ``users`` table.
 
-    The fix is for ``AuthService`` to mint a fresh ephemeral Supabase
-    client for OAuth-only operations so the injected service-role
-    client used by repositories keeps its original auth state. This
-    test verifies that contract: when ``handle_google_callback`` runs,
-    ``create_client`` is called with the configured Supabase URL and
-    key (i.e. a NEW client is built), and the OAuth call lands on that
-    client — not on the injected ``self._supabase``.
+    The PKCE flow forces both ``sign_in_with_oauth`` and
+    ``exchange_code_for_session`` to share the SAME client (otherwise
+    the verifier saved in step 1 cannot be read in step 2), so the
+    fix instead re-emits a ``SIGNED_OUT`` event on the shared client
+    after exchange to restore the service-role headers.
+
+    This test verifies that contract: ``handle_google_callback``
+    causes a ``("SIGNED_OUT", None)`` event to be dispatched on the
+    shared Supabase client.
     """
-    # Build a separate FakeSupabase to act as the "ephemeral OAuth client".
-    oauth_client = FakeSupabase()
-    oauth_client.auth.next_callback_user = make_fake_supabase_user(
-        user_id="google-sub-iso",
-        email="iso@example.com",
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-reset",
+        email="reset@example.com",
     )
 
-    # Track that create_client gets called with the configured URL+key.
-    create_client_calls: list[tuple[str, str]] = []
-
-    def fake_create_client(url: str, key: str) -> FakeSupabase:
-        create_client_calls.append((url, key))
-        return oauth_client
-
-    monkeypatch.setattr(
-        "app.services.auth_service.create_client",
-        fake_create_client,
-    )
-
-    # Construct an AuthService whose injected client (``fake_db``) is
-    # DIFFERENT from the OAuth ephemeral client. If AuthService
-    # incorrectly used self._supabase.auth.exchange_code_for_session,
-    # the call would go to ``fake_db`` and fail because no callback
-    # user is configured there.
-    AuthService._pending_tokens.clear()
-    service = AuthService(
-        user_repo=user_repo,  # type: ignore[arg-type]
-        supabase=fake_db,  # type: ignore[arg-type]
-        audit_service=audit_service,  # type: ignore[arg-type]
-    )
-
-    auth_code, _user_name = await service.handle_google_callback("any-code")
+    auth_code, _user_name = await auth_service.handle_google_callback("any-code")
     assert isinstance(auth_code, str) and auth_code
 
-    # OAuth must hit the ephemeral client only.
-    assert oauth_client.auth.last_exchange_code == "any-code"
-    assert fake_db.auth.last_exchange_code is None
-    # And create_client was invoked with the actual Supabase config.
-    assert create_client_calls
-    url, key = create_client_calls[0]
-    assert url == settings.supabase_url
-    assert key == settings.supabase_key
+    assert fake_db.auth_events_received, (
+        "AuthService did not reset the shared Supabase client's auth state "
+        "after exchange_code_for_session — the next DB query would run with "
+        "the user's JWT and trigger PostgREST 42501."
+    )
+    last_event, last_session = fake_db.auth_events_received[-1]
+    assert last_event == "SIGNED_OUT"
+    assert last_session is None
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_resets_auth_state_even_on_exchange_failure(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """If ``exchange_code_for_session`` raises, the auth state must STILL be reset.
+
+    ``exchange_code_for_session`` may have partially mutated the
+    client (e.g. set storage to a stale session) before raising, so
+    leaving it untouched would still poison the next inbound request.
+    The reset runs in a ``finally`` block to cover this case.
+    """
+    fake_db.auth.exchange_should_fail = True
+
+    with pytest.raises(UnauthorizedError):
+        await auth_service.handle_google_callback("any-code")
+
+    assert fake_db.auth_events_received, (
+        "AuthService must reset the auth state even when exchange_code_for_session raises."
+    )
+    assert fake_db.auth_events_received[-1] == ("SIGNED_OUT", None)

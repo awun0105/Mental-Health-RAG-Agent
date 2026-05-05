@@ -245,9 +245,20 @@ class FakeSupabase:
     def __init__(self) -> None:
         self.tables: dict[str, list[dict[str, Any]]] = {}
         self.auth: _FakeSupabaseAuth = _FakeSupabaseAuth()
+        # Records every `_listen_to_auth_events` call AuthService makes
+        # to reset the client's auth state back to service_role after
+        # a SIGNED_IN event (triggered by exchange_code_for_session).
+        # Real supabase-py uses this same private hook to swap the
+        # PostgREST Authorization header, so observing the call is a
+        # faithful regression for the 42501 bug observed live.
+        self.auth_events_received: list[tuple[str, Any]] = []
 
     def table(self, name: str) -> _FakeQuery:
         return _FakeQuery(self, name)
+
+    def _listen_to_auth_events(self, event: str, session: Any) -> None:
+        """Record auth-state-change events emitted by AuthService."""
+        self.auth_events_received.append((event, session))
 
     def seed(self, name: str, rows: list[dict[str, Any]]) -> None:
         """Insert pre-built rows directly into the in-memory table."""

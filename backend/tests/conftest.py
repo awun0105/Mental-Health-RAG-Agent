@@ -76,7 +76,6 @@ def auth_service(
     user_repo: UserRepository,
     fake_db: FakeSupabase,
     audit_service: AuditService,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> AuthService:
     """AuthService wired with the in-memory FakeSupabase and a real audit service.
 
@@ -85,16 +84,8 @@ def auth_service(
     ``USER_REGISTERED`` log events). The class-level
     ``_pending_tokens`` store is cleared per test so tokens minted in
     one test cannot leak into another.
-
-    The OAuth-only ephemeral client is monkeypatched to return the same
-    ``fake_db`` instance so existing fakes on ``fake_db.auth`` are still
-    observed.
     """
     AuthService._pending_tokens.clear()
-    monkeypatch.setattr(
-        "app.services.auth_service.create_client",
-        lambda url, key: cast(Client, fake_db),
-    )
     return AuthService(
         user_repo=user_repo,
         supabase=cast(Client, fake_db),
@@ -196,10 +187,7 @@ def auth_headers(
 
 
 @pytest.fixture
-def client(
-    fake_db: FakeSupabase,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[TestClient]:
+def client(fake_db: FakeSupabase) -> Iterator[TestClient]:
     """FastAPI TestClient with FakeSupabase wired into every repo via DI override.
 
     The `fake_db` fixture is shared with the same test, so seeding rows in
@@ -208,18 +196,9 @@ def client(
     ``AuthService._pending_tokens`` is a class-level dict shared across
     request-scoped instances, so it is cleared per test to prevent
     tokens minted by one test from leaking into another.
-
-    The OAuth ephemeral client factory is also monkeypatched to return
-    the same ``fake_db`` so that ``auth.sign_in_with_oauth`` and
-    ``auth.exchange_code_for_session`` exercised through the routes
-    still hit the in-memory stub.
     """
     AuthService._pending_tokens.clear()
     app.dependency_overrides[get_supabase] = lambda: fake_db
-    monkeypatch.setattr(
-        "app.services.auth_service.create_client",
-        lambda url, key: cast(Client, fake_db),
-    )
     try:
         with TestClient(app) as test_client:
             yield test_client
