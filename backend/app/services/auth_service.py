@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import ValidationError
-from supabase import Client
+from supabase import Client, create_client
 
 from app.core.config import settings
 from app.core.constants import AuditAction, AuthProvider, UserRole
@@ -149,6 +149,24 @@ class AuthService:
 
     # ─── Google OAuth ────────────────────────────────────────────────────────
 
+    def _ephemeral_supabase_client(self) -> Client:
+        """Return a fresh Supabase client for OAuth-only operations.
+
+        ``supabase-py`` keeps a single auth state per ``Client`` instance.
+        ``auth.exchange_code_for_session`` swaps the client over to the
+        newly issued user JWT (role ``authenticated``), and any subsequent
+        ``db.table(...).execute()`` call on that same client then goes
+        through PostgREST as the user instead of the configured service
+        role key. With RLS enabled (or simply no ``GRANT ... TO
+        authenticated``), reads on tables like ``public.users`` fail with
+        PostgREST 42501 ``permission denied for table users``.
+
+        We isolate the OAuth dance on its own ephemeral client so the
+        shared service-role client used by the repositories keeps its
+        original auth state.
+        """
+        return create_client(settings.supabase_url, settings.supabase_key)
+
     def get_google_oauth_url(self) -> str:
         """Return the Google OAuth URL via Supabase's OAuth proxy.
 
@@ -159,7 +177,7 @@ class AuthService:
         """
         callback_url = f"{settings.backend_url}/api/v1/auth/google/callback"
         try:
-            response = self._supabase.auth.sign_in_with_oauth(
+            response = self._ephemeral_supabase_client().auth.sign_in_with_oauth(
                 {
                     "provider": "google",
                     "options": {"redirect_to": callback_url},
@@ -282,7 +300,7 @@ class AuthService:
         """
         callback_url = f"{settings.backend_url}/api/v1/auth/google/callback"
         try:
-            session_response = self._supabase.auth.exchange_code_for_session(
+            session_response = self._ephemeral_supabase_client().auth.exchange_code_for_session(
                 {
                     "auth_code": code,
                     "code_verifier": "",
