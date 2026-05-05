@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import ValidationError
-from supabase import Client, create_client
+from supabase import Client
 
 from app.core.config import settings
 from app.core.constants import AuditAction, AuthProvider, UserRole
@@ -149,23 +149,32 @@ class AuthService:
 
     # ─── Google OAuth ────────────────────────────────────────────────────────
 
-    def _ephemeral_supabase_client(self) -> Client:
-        """Return a fresh Supabase client for OAuth-only operations.
+    def _reset_supabase_to_service_role(self) -> None:
+        """Restore the shared Supabase client's auth state to ``service_role``.
 
         ``supabase-py`` keeps a single auth state per ``Client`` instance.
-        ``auth.exchange_code_for_session`` swaps the client over to the
-        newly issued user JWT (role ``authenticated``), and any subsequent
-        ``db.table(...).execute()`` call on that same client then goes
-        through PostgREST as the user instead of the configured service
-        role key. With RLS enabled (or simply no ``GRANT ... TO
-        authenticated``), reads on tables like ``public.users`` fail with
-        PostgREST 42501 ``permission denied for table users``.
+        ``auth.exchange_code_for_session`` triggers a ``SIGNED_IN`` event
+        which mutates the client over to the newly issued user JWT (role
+        ``authenticated``). Any subsequent ``db.table(...).execute()``
+        call on that same client then goes through PostgREST as the
+        user instead of the configured service-role key, and reads on
+        tables like ``public.users`` fail with PostgREST 42501
+        ``permission denied for table users``.
 
-        We isolate the OAuth dance on its own ephemeral client so the
-        shared service-role client used by the repositories keeps its
-        original auth state.
+        Re-emitting a ``SIGNED_OUT`` event with no session is the
+        canonical reset path inside supabase-py: it nulls the cached
+        ``_postgrest`` / ``_storage`` / ``_functions`` clients (so they
+        lazily re-init with the original headers on next access) and
+        rewrites ``options.headers['Authorization']`` back to a Bearer
+        token using ``self.supabase_key``. We use a private method here
+        because it is the same call the library uses internally on auth
+        state changes; ``auth.sign_out({"scope": "local"})`` would also
+        do this but additionally makes a network call to the Auth admin
+        endpoint which is unnecessary for our purpose.
         """
-        return create_client(settings.supabase_url, settings.supabase_key)
+        listen = getattr(self._supabase, "_listen_to_auth_events", None)
+        if callable(listen):
+            listen("SIGNED_OUT", None)
 
     def get_google_oauth_url(self) -> str:
         """Return the Google OAuth URL via Supabase's OAuth proxy.
@@ -173,11 +182,18 @@ class AuthService:
         Supabase generates a URL with the appropriate ``client_id`` and
         scopes for the configured Google provider. After the user signs
         in on Google, Supabase redirects to ``redirect_to`` with a one
-        time auth code that the backend exchanges below.
+        time auth code that the backend exchanges below. The PKCE
+        ``code_verifier`` is generated and stashed in this client's
+        local storage by ``sign_in_with_oauth``, and supabase-py's
+        ``exchange_code_for_session`` reads it back from the same
+        storage on the next request — so both calls must run on the
+        same singleton client (we cannot use a fresh per-call client
+        for the OAuth dance, otherwise the verifier is lost between
+        the two requests and Supabase rejects the exchange).
         """
         callback_url = f"{settings.backend_url}/api/v1/auth/google/callback"
         try:
-            response = self._ephemeral_supabase_client().auth.sign_in_with_oauth(
+            response = self._supabase.auth.sign_in_with_oauth(
                 {
                     "provider": "google",
                     "options": {"redirect_to": callback_url},
@@ -300,15 +316,23 @@ class AuthService:
         """
         callback_url = f"{settings.backend_url}/api/v1/auth/google/callback"
         try:
-            session_response = self._ephemeral_supabase_client().auth.exchange_code_for_session(
-                {
-                    "auth_code": code,
-                    "code_verifier": "",
-                    "redirect_to": callback_url,
-                },
-            )
-        except Exception as exc:
-            raise UnauthorizedError("Google login failed") from exc
+            try:
+                session_response = self._supabase.auth.exchange_code_for_session(
+                    {
+                        "auth_code": code,
+                        "code_verifier": "",
+                        "redirect_to": callback_url,
+                    },
+                )
+            except Exception as exc:
+                raise UnauthorizedError("Google login failed") from exc
+        finally:
+            # Always reset the shared client's auth state, including the
+            # failure path. ``exchange_code_for_session`` may have partially
+            # mutated the client even if it ultimately raised, and leaving
+            # the client in the user-authenticated state would break the
+            # NEXT inbound request that touches a repository.
+            self._reset_supabase_to_service_role()
 
         supabase_user = getattr(session_response, "user", None)
         if supabase_user is None:
