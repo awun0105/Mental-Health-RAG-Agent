@@ -68,9 +68,15 @@ def get_audit_service(
 
 def get_auth_service(
     user_repo: Annotated[UserRepository, Depends(get_user_repo)],
+    supabase: Annotated[Client, Depends(get_supabase)],
+    audit_service: Annotated[AuditService, Depends(get_audit_service)],
 ) -> AuthService:
     """Return an auth service instance."""
-    return AuthService(user_repo=user_repo)
+    return AuthService(
+        user_repo=user_repo,
+        supabase=supabase,
+        audit_service=audit_service,
+    )
 
 
 def get_consent_service(

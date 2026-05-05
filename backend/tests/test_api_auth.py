@@ -7,10 +7,11 @@ These tests exercise the full DI chain:
 
 from __future__ import annotations
 
-from app.core.constants import UserRole
+from app.core.constants import AuthProvider, UserRole
 from fastapi.testclient import TestClient
 
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, make_user_row
+from tests.fakes.fake_supabase import FakeSupabase, make_fake_supabase_user
 
 
 def _register_payload(
@@ -139,3 +140,158 @@ def test_me_with_valid_token_returns_claims(client: TestClient) -> None:
     assert body["user_id"] == "uid-42"
     assert body["email"] == "dora@example.com"
     assert body["role"] == "patient"
+
+
+# ─── Google OAuth routes ─────────────────────────────────────────────────────
+
+
+def test_google_login_url_returns_supabase_url(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """GET /auth/google returns the URL Supabase generated for the OAuth flow."""
+    fake_db.auth.next_oauth_url = "https://accounts.google.com/o/oauth2/auth?route=1"
+
+    response = client.get("/api/v1/auth/google")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "url": "https://accounts.google.com/o/oauth2/auth?route=1",
+    }
+
+
+def test_google_callback_redirects_to_frontend_with_auth_code(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """A successful Google login redirects to the frontend with an opaque auth code."""
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-route",
+        email="route@example.com",
+        full_name="Route User",
+    )
+
+    response = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "supabase-code"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert "auth_code=" in location
+    assert "user_name=" in location
+    # The actual JWT must NEVER appear in the URL.
+    assert "access_token=" not in location
+    assert "Bearer" not in location
+
+
+def test_google_callback_redirects_with_error_when_email_belongs_to_local_account(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """Verify-first reject must produce a redirect with ``google_error`` set."""
+    fake_db.seed(
+        "users",
+        [
+            make_user_row(
+                role=UserRole.PATIENT,
+                email="conflict@example.com",
+                auth_provider=AuthProvider.LOCAL,
+            ),
+        ],
+    )
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-conflict",
+        email="conflict@example.com",
+    )
+
+    response = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "supabase-code"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert "google_error=" in location
+    assert "auth_code=" not in location
+
+
+def test_google_exchange_returns_token_for_valid_code(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """POST /auth/google/exchange trades the one-time code for a real JWT."""
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-exchange",
+        email="exchange@example.com",
+        full_name="Exchange User",
+    )
+    callback = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "supabase-code"},
+        follow_redirects=False,
+    )
+    assert callback.status_code in (302, 307)
+    location = callback.headers["location"]
+    auth_code = location.split("auth_code=", 1)[1].split("&", 1)[0]
+
+    response = client.post(
+        "/api/v1/auth/google/exchange",
+        json={"auth_code": auth_code},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["token_type"] == "bearer"
+    assert body["access_token"]
+    assert body["user"]["email"] == "exchange@example.com"
+    assert body["user"]["auth_provider"] == "google"
+
+
+def test_google_exchange_rejects_unknown_code(client: TestClient) -> None:
+    """A completely unknown auth code must be rejected with 401."""
+    response = client.post(
+        "/api/v1/auth/google/exchange",
+        json={"auth_code": "never-issued-by-this-server"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_google_callback_redirects_with_error_when_returning_user_is_inactive(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """Deactivated Google users get a friendly error redirect, not a JWT.
+
+    Regression for the Devin Review finding on PR #15.
+    """
+    existing = make_user_row(
+        role=UserRole.PATIENT,
+        email="deactivated-route@example.com",
+        full_name="Deactivated Route User",
+        auth_provider=AuthProvider.GOOGLE,
+        password_hash="",
+    )
+    existing["provider_user_id"] = "google-sub-route-deactivated"
+    existing["is_active"] = False
+    fake_db.seed("users", [existing])
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-route-deactivated",
+        email="deactivated-route@example.com",
+    )
+
+    response = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "supabase-code"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert "google_error=" in location
+    assert "auth_code=" not in location
+    # Do NOT leak the JWT in the redirect even partially.
+    assert "access_token=" not in location
