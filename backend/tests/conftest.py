@@ -14,12 +14,15 @@ from app.core.constants import AuthProvider, UserRole
 from app.db.repositories.assignment_repo import AssignmentRepository
 from app.db.repositories.audit_repo import AuditRepository
 from app.db.repositories.consent_repo import ConsentRepository
+from app.db.repositories.message_repo import MessageRepository
+from app.db.repositories.session_repo import SessionRepository
 from app.db.repositories.user_repo import UserRepository
 from app.main import app
 from app.services.assignment_service import AssignmentService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.consent_service import ConsentService
+from app.services.session_service import SessionService
 from fastapi.testclient import TestClient
 from jose import jwt
 from supabase import Client
@@ -51,6 +54,16 @@ def audit_repo(fake_db: FakeSupabase) -> AuditRepository:
 @pytest.fixture
 def assignment_repo(fake_db: FakeSupabase) -> AssignmentRepository:
     return AssignmentRepository(db=cast(Client, fake_db))
+
+
+@pytest.fixture
+def session_repo(fake_db: FakeSupabase) -> SessionRepository:
+    return SessionRepository(db=cast(Client, fake_db))
+
+
+@pytest.fixture
+def message_repo(fake_db: FakeSupabase) -> MessageRepository:
+    return MessageRepository(db=cast(Client, fake_db))
 
 
 @pytest.fixture
@@ -97,6 +110,21 @@ def assignment_service(
     return AssignmentService(
         assignment_repo=assignment_repo,
         user_repo=user_repo,
+        audit_service=audit_service,
+    )
+
+
+@pytest.fixture
+def session_service(
+    session_repo: SessionRepository,
+    consent_repo: ConsentRepository,
+    assignment_repo: AssignmentRepository,
+    audit_service: AuditService,
+) -> SessionService:
+    return SessionService(
+        session_repo=session_repo,
+        consent_repo=consent_repo,
+        assignment_repo=assignment_repo,
         audit_service=audit_service,
     )
 
