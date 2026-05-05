@@ -219,3 +219,42 @@ def test_exchange_auth_code_rejects_unknown_code(auth_service: AuthService) -> N
     """An auth code never minted by ``handle_google_callback`` is rejected."""
     with pytest.raises(UnauthorizedError):
         auth_service.exchange_auth_code("never-minted")
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_rejects_returning_inactive_user(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+) -> None:
+    """A deactivated Google user must NOT be able to re-login via Google.
+
+    Regression for the Devin Review finding on PR #15: without an
+    explicit ``is_active`` check on the returning-user branch, an admin
+    deactivating a Google user (``is_active=false``) is silently
+    bypassed because the user just completes the Google OAuth flow
+    again and a fresh JWT is minted.
+    """
+    existing = make_user_row(
+        role=UserRole.PATIENT,
+        email="deactivated@example.com",
+        full_name="Deactivated Google User",
+        auth_provider=AuthProvider.GOOGLE,
+        password_hash="",
+    )
+    existing["provider_user_id"] = "google-sub-deactivated"
+    existing["is_active"] = False
+    fake_db.seed("users", [existing])
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-deactivated",
+        email="deactivated@example.com",
+    )
+
+    with pytest.raises(UnauthorizedError) as excinfo:
+        await auth_service.handle_google_callback("any-code")
+
+    assert "inactive" in str(excinfo.value).lower()
+    # And no JWT was stashed in the pending-tokens map for a deactivated user.
+    assert AuthService._pending_tokens == {}
+    # And no USER_LOGIN audit was emitted (deactivated users don't "log in").
+    actions = [a["action"] for a in fake_db.all_rows("audit_logs")]
+    assert AuditAction.USER_LOGIN.value not in actions

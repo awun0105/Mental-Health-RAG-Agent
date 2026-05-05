@@ -218,6 +218,13 @@ class AuthService:
                 metadata=metadata,
             )
 
+        # Mirror the local-login is_active guard (auth_service.login above).
+        # Without this, a user deactivated by an admin can simply complete
+        # the Google OAuth dance again and silently regain a valid app JWT,
+        # bypassing the admin's ability to revoke access.
+        if not user.is_active:
+            raise UnauthorizedError("User account is inactive")
+
         access_token = self.create_access_token(
             subject=user.id,
             email=str(user.email),

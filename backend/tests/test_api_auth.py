@@ -258,3 +258,40 @@ def test_google_exchange_rejects_unknown_code(client: TestClient) -> None:
     )
 
     assert response.status_code == 401
+
+
+def test_google_callback_redirects_with_error_when_returning_user_is_inactive(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """Deactivated Google users get a friendly error redirect, not a JWT.
+
+    Regression for the Devin Review finding on PR #15.
+    """
+    existing = make_user_row(
+        role=UserRole.PATIENT,
+        email="deactivated-route@example.com",
+        full_name="Deactivated Route User",
+        auth_provider=AuthProvider.GOOGLE,
+        password_hash="",
+    )
+    existing["provider_user_id"] = "google-sub-route-deactivated"
+    existing["is_active"] = False
+    fake_db.seed("users", [existing])
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-route-deactivated",
+        email="deactivated-route@example.com",
+    )
+
+    response = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "supabase-code"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 307)
+    location = response.headers["location"]
+    assert "google_error=" in location
+    assert "auth_code=" not in location
+    # Do NOT leak the JWT in the redirect even partially.
+    assert "access_token=" not in location
