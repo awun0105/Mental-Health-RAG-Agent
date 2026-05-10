@@ -97,6 +97,29 @@ def login(*, email: str, password: str) -> dict[str, Any]:
     return _handle(response)
 
 
+def get_google_oauth_url() -> str:
+    """GET /api/v1/auth/google — return the provider redirect URL."""
+    response = requests.get(
+        _url("/auth/google"),
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+    )
+    body = _handle(response)
+    url = body.get("url")
+    if not isinstance(url, str) or not url:
+        raise BackendError(response.status_code, "Backend returned no Google OAuth URL")
+    return url
+
+
+def exchange_google_auth_code(auth_code: str) -> dict[str, Any]:
+    """POST /api/v1/auth/google/exchange — trade one-time code for app JWT."""
+    response = requests.post(
+        _url("/auth/google/exchange"),
+        json={"auth_code": auth_code},
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+    )
+    return _handle(response)
+
+
 def get_me() -> dict[str, Any]:
     """GET /api/v1/auth/me — decode the current bearer token's claims."""
     response = requests.get(

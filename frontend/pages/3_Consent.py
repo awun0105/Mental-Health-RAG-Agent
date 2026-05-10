@@ -7,11 +7,10 @@ from typing import Any
 import streamlit as st
 from api_client import BackendError, accept_consent, consent_status
 
-st.set_page_config(page_title="Consent", page_icon="📜")
 st.title("Chính sách & Đồng ý sử dụng")
 
 if not st.session_state.get("access_token"):
-    st.warning("Bạn cần đăng nhập trước. Mở trang **Login** ở sidebar.")
+    st.warning("Bạn cần đăng nhập trước. Mở trang **Log in or sign up**.")
     st.stop()
 
 status: dict[str, Any] | None = None

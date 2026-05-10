@@ -5,11 +5,10 @@ from __future__ import annotations
 import streamlit as st
 from api_client import BackendError, get_me
 
-st.set_page_config(page_title="Profile", page_icon="👤")
 st.title("Hồ sơ tài khoản")
 
 if not st.session_state.get("access_token"):
-    st.warning("Bạn cần đăng nhập trước. Mở trang **Login** ở sidebar.")
+    st.warning("Bạn cần đăng nhập trước. Mở trang **Log in or sign up**.")
     st.stop()
 
 try:
