@@ -165,12 +165,57 @@ def auth_service(
     )
 
 
+class _NullAuthzService:
+    """Trivial AuthorizationService stand-in for tests that don't seed RBAC.
+
+    Tests that pre-date Phase 6 PR A typically don't seed ``user_roles``
+    rows, so the production ``AuthorizationService`` would resolve an
+    empty role set for the actor. This stub returns an empty role set
+    everywhere — consent acceptance / chat session lifecycle tests then
+    assert their own concerns without depending on the role-name pipeline.
+    Tests that DO want to exercise the role-name pipeline either build
+    ``AuthorizationService`` directly via the ``authorization_service``
+    fixture, or call ``seed_rbac_tables`` and route through the API.
+    """
+
+    async def get_user_role_names(self, user_id: str) -> set[str]:
+        return set()
+
+    async def get_primary_role_name(self, user_id: str) -> str | None:
+        return None
+
+    def invalidate_cache(self, user_id: str) -> None:
+        return None
+
+
+@pytest.fixture
+def null_authz_service() -> _NullAuthzService:
+    return _NullAuthzService()
+
+
 @pytest.fixture
 def consent_service(
     consent_repo: ConsentRepository,
     audit_service: AuditService,
+    null_authz_service: _NullAuthzService,
 ) -> ConsentService:
-    return ConsentService(consent_repo=consent_repo, audit_service=audit_service)
+    return ConsentService(
+        consent_repo=consent_repo,
+        audit_service=audit_service,
+        authorization_service=cast(AuthorizationService, null_authz_service),
+    )
+
+
+@pytest.fixture
+def authorization_service(
+    permission_repo: PermissionRepository,
+    user_role_repo: UserRoleRepository,
+) -> AuthorizationService:
+    AuthorizationService.clear_cache()
+    return AuthorizationService(
+        permission_repo=permission_repo,
+        user_role_repo=user_role_repo,
+    )
 
 
 @pytest.fixture
@@ -178,11 +223,13 @@ def assignment_service(
     assignment_repo: AssignmentRepository,
     user_repo: UserRepository,
     audit_service: AuditService,
+    authorization_service: AuthorizationService,
 ) -> AssignmentService:
     return AssignmentService(
         assignment_repo=assignment_repo,
         user_repo=user_repo,
         audit_service=audit_service,
+        authorization_service=authorization_service,
     )
 
 
@@ -192,37 +239,47 @@ def session_service(
     consent_repo: ConsentRepository,
     assignment_repo: AssignmentRepository,
     audit_service: AuditService,
+    authorization_service: AuthorizationService,
 ) -> SessionService:
     return SessionService(
         session_repo=session_repo,
         consent_repo=consent_repo,
         assignment_repo=assignment_repo,
         audit_service=audit_service,
+        authorization_service=authorization_service,
     )
 
 
 @pytest.fixture
-def authorization_service(
-    permission_repo: PermissionRepository,
-    assignment_repo: AssignmentRepository,
-) -> AuthorizationService:
-    AuthorizationService.clear_cache()
-    return AuthorizationService(
-        permission_repo=permission_repo,
-        assignment_repo=assignment_repo,
+def consent_service_with_authz(
+    consent_repo: ConsentRepository,
+    audit_service: AuditService,
+    authorization_service: AuthorizationService,
+) -> ConsentService:
+    """ConsentService wired with the production AuthorizationService.
+
+    The default ``consent_service`` fixture is used by tests written
+    against the legacy signature; this variant exercises the Phase 6
+    PR A pipeline (resolves the actor's role from ``user_roles``).
+    """
+    return ConsentService(
+        consent_repo=consent_repo,
+        audit_service=audit_service,
+        authorization_service=authorization_service,
     )
 
 
 class _RoleBasedAuthzService:
     """Test-only AuthorizationService that resolves perms from the JWT role.
 
-    Production resolves permissions through Supabase RPC; that requires
-    seeded ``user_roles`` for every test user. Most route-level tests
-    only care about the ``admin / doctor / patient`` triad and don't
-    seed RBAC tables — this stand-in mirrors the canonical seed mapping
-    so the tests stay focused on route logic. Tests that exercise the
-    real authorization pipeline (e.g. ``test_authorization_service.py``)
-    construct ``AuthorizationService`` directly and bypass this stub.
+    Production resolves permissions and role names through Supabase
+    RPCs; that requires seeded ``user_roles`` for every test user. Most
+    route-level tests only care about the ``admin / doctor / patient``
+    triad and don't seed RBAC tables — this stand-in mirrors the
+    canonical seed mapping so the tests stay focused on route logic.
+    Tests that exercise the real authorization pipeline (e.g.
+    ``test_authorization_service.py``) construct ``AuthorizationService``
+    directly and bypass this stub.
     """
 
     def __init__(self, role: str) -> None:
@@ -239,6 +296,12 @@ class _RoleBasedAuthzService:
         permissions = await self.get_user_permissions(user_id)
         if permission_code not in permissions:
             raise ForbiddenError(f"Missing permission: {permission_code}")
+
+    async def get_user_role_names(self, user_id: str) -> set[str]:
+        return {self._role}
+
+    async def get_primary_role_name(self, user_id: str) -> str | None:
+        return self._role
 
     def invalidate_cache(self, user_id: str) -> None:
         return None

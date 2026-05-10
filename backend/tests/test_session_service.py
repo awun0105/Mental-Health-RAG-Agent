@@ -15,9 +15,10 @@ from app.core.exceptions import (
     ForbiddenError,
     NotFoundError,
 )
+from app.services.authorization_service import AuthorizationService
 from app.services.session_service import SessionService
 
-from tests.conftest import make_user_row
+from tests.conftest import make_user_row, seed_rbac_tables
 from tests.fakes.fake_supabase import FakeSupabase
 
 
@@ -62,19 +63,47 @@ def _seed_session(
     return session_id
 
 
+def _seed_user_with_role(
+    fake_db: FakeSupabase,
+    *,
+    role: UserRole,
+    email: str | None = None,
+) -> dict[str, Any]:
+    """Seed a users row AND its matching ``user_roles`` row.
+
+    The session service now resolves the actor's role from
+    ``user_roles`` via the production ``AuthorizationService``, so test
+    users must have both representations seeded for the resource-level
+    branching to work end-to-end against ``FakeSupabase``.
+    """
+    user = make_user_row(role=role, email=email)
+    fake_db.seed("users", [user])
+    seed_rbac_tables(fake_db, user_role_pairs=[(user["id"], role.value)])
+    return user
+
+
+@pytest.fixture(autouse=True)
+def _reset_authz_cache() -> None:
+    """Drop the process-local AuthorizationService cache between tests.
+
+    The role-name cache is class-level; without this reset, a role-name
+    set seeded in one test would leak into the next test that happens to
+    reuse the same generated user id.
+    """
+    AuthorizationService.clear_cache()
+
+
 @pytest.mark.asyncio
 async def test_start_session_happy_path_creates_row_and_audit(
     session_service: SessionService,
     fake_db: FakeSupabase,
 ) -> None:
     """A patient with valid consent can start an active session and emits audit."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
     _seed_consent(fake_db, patient["id"])
 
     session = await session_service.start_session(
         user_id=patient["id"],
-        role=UserRole.PATIENT.value,
         metadata={"source": "web"},
     )
 
@@ -102,13 +131,11 @@ async def test_start_session_without_consent_raises(
     fake_db: FakeSupabase,
 ) -> None:
     """Without an accepted consent record, start_session must reject with 403."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
 
     with pytest.raises(ConsentRequiredError):
         await session_service.start_session(
             user_id=patient["id"],
-            role=UserRole.PATIENT.value,
         )
 
     assert fake_db.all_rows("chat_sessions") == []
@@ -120,15 +147,13 @@ async def test_start_session_rejects_when_active_session_exists(
     fake_db: FakeSupabase,
 ) -> None:
     """Q2 policy: 409 conflict if patient already has an active session."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
     _seed_consent(fake_db, patient["id"])
     _seed_session(fake_db, user_id=patient["id"], status=SessionStatus.ACTIVE)
 
     with pytest.raises(AlreadyExistsError) as excinfo:
         await session_service.start_session(
             user_id=patient["id"],
-            role=UserRole.PATIENT.value,
         )
 
     assert excinfo.value.status_code == 409
@@ -140,14 +165,12 @@ async def test_start_session_allows_after_previous_closed(
     fake_db: FakeSupabase,
 ) -> None:
     """A new session is permitted after the previous one was closed."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
     _seed_consent(fake_db, patient["id"])
     _seed_session(fake_db, user_id=patient["id"], status=SessionStatus.CLOSED)
 
     session = await session_service.start_session(
         user_id=patient["id"],
-        role=UserRole.PATIENT.value,
     )
 
     assert session.status == SessionStatus.ACTIVE
@@ -159,13 +182,11 @@ async def test_start_session_rejects_non_patient(
     fake_db: FakeSupabase,
 ) -> None:
     """Doctors and admins cannot start patient chat sessions."""
-    doctor = make_user_row(role=UserRole.DOCTOR)
-    fake_db.seed("users", [doctor])
+    doctor = _seed_user_with_role(fake_db, role=UserRole.DOCTOR)
 
     with pytest.raises(ForbiddenError):
         await session_service.start_session(
             user_id=doctor["id"],
-            role=UserRole.DOCTOR.value,
         )
 
 
@@ -175,15 +196,13 @@ async def test_close_session_happy_path(
     fake_db: FakeSupabase,
 ) -> None:
     """Closing an active session sets status, ended_at and emits audit with reason."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
     _seed_consent(fake_db, patient["id"])
     session_id = _seed_session(fake_db, user_id=patient["id"])
 
     closed = await session_service.close_session(
         session_id=session_id,
         current_user_id=patient["id"],
-        current_user_role=UserRole.PATIENT.value,
         reason="user_end",
     )
 
@@ -195,6 +214,7 @@ async def test_close_session_happy_path(
     ]
     assert len(audits) == 1
     assert audits[0]["metadata"]["reason"] == "user_end"
+    assert audits[0]["role"] == UserRole.PATIENT.value
 
 
 @pytest.mark.asyncio
@@ -203,14 +223,12 @@ async def test_close_session_is_idempotent(
     fake_db: FakeSupabase,
 ) -> None:
     """Closing an already-closed session returns it unchanged with no extra audit."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
     session_id = _seed_session(fake_db, user_id=patient["id"], status=SessionStatus.CLOSED)
 
     closed = await session_service.close_session(
         session_id=session_id,
         current_user_id=patient["id"],
-        current_user_role=UserRole.PATIENT.value,
     )
 
     assert closed.status == SessionStatus.CLOSED
@@ -229,7 +247,6 @@ async def test_close_session_not_found_raises(
         await session_service.close_session(
             session_id=str(uuid4()),
             current_user_id=str(uuid4()),
-            current_user_role=UserRole.PATIENT.value,
         )
 
 
@@ -239,16 +256,14 @@ async def test_close_session_rejects_non_owner(
     fake_db: FakeSupabase,
 ) -> None:
     """Only the owning patient can close their own session."""
-    owner = make_user_row(role=UserRole.PATIENT)
-    other = make_user_row(role=UserRole.PATIENT, email="other@example.com")
-    fake_db.seed("users", [owner, other])
+    owner = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
+    other = _seed_user_with_role(fake_db, role=UserRole.PATIENT, email="other@example.com")
     session_id = _seed_session(fake_db, user_id=owner["id"])
 
     with pytest.raises(ForbiddenError):
         await session_service.close_session(
             session_id=session_id,
             current_user_id=other["id"],
-            current_user_role=UserRole.PATIENT.value,
         )
 
 
@@ -258,14 +273,12 @@ async def test_get_session_owner_patient_succeeds(
     fake_db: FakeSupabase,
 ) -> None:
     """The session's owner patient can read their own session."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    fake_db.seed("users", [patient])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
     session_id = _seed_session(fake_db, user_id=patient["id"])
 
     session = await session_service.get_session(
         session_id=session_id,
         current_user_id=patient["id"],
-        current_user_role=UserRole.PATIENT.value,
     )
 
     assert session.id == session_id
@@ -277,9 +290,8 @@ async def test_get_session_assigned_doctor_succeeds(
     fake_db: FakeSupabase,
 ) -> None:
     """A doctor with an active assignment to the patient can read the session."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    doctor = make_user_row(role=UserRole.DOCTOR)
-    fake_db.seed("users", [patient, doctor])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
+    doctor = _seed_user_with_role(fake_db, role=UserRole.DOCTOR)
     session_id = _seed_session(fake_db, user_id=patient["id"])
     fake_db.seed(
         "doctor_assignments",
@@ -298,7 +310,6 @@ async def test_get_session_assigned_doctor_succeeds(
     session = await session_service.get_session(
         session_id=session_id,
         current_user_id=doctor["id"],
-        current_user_role=UserRole.DOCTOR.value,
     )
 
     assert session.id == session_id
@@ -310,16 +321,14 @@ async def test_get_session_unassigned_doctor_rejected(
     fake_db: FakeSupabase,
 ) -> None:
     """A doctor without an active assignment to the patient cannot read the session."""
-    patient = make_user_row(role=UserRole.PATIENT)
-    doctor = make_user_row(role=UserRole.DOCTOR)
-    fake_db.seed("users", [patient, doctor])
+    patient = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
+    doctor = _seed_user_with_role(fake_db, role=UserRole.DOCTOR)
     session_id = _seed_session(fake_db, user_id=patient["id"])
 
     with pytest.raises(ForbiddenError):
         await session_service.get_session(
             session_id=session_id,
             current_user_id=doctor["id"],
-            current_user_role=UserRole.DOCTOR.value,
         )
 
 
@@ -329,9 +338,8 @@ async def test_list_sessions_for_user_filters_by_user_only(
     fake_db: FakeSupabase,
 ) -> None:
     """``list_sessions_for_user`` returns only sessions belonging to that user."""
-    me = make_user_row(role=UserRole.PATIENT)
-    other = make_user_row(role=UserRole.PATIENT, email="other@example.com")
-    fake_db.seed("users", [me, other])
+    me = _seed_user_with_role(fake_db, role=UserRole.PATIENT)
+    other = _seed_user_with_role(fake_db, role=UserRole.PATIENT, email="other@example.com")
     _seed_session(fake_db, user_id=me["id"])
     _seed_session(fake_db, user_id=other["id"])
 

@@ -8,6 +8,7 @@ from app.schemas.consent import (
     ConsentStatusResponse,
 )
 from app.services.audit_service import AuditService
+from app.services.authorization_service import AuthorizationService
 
 
 class ConsentService:
@@ -17,18 +18,23 @@ class ConsentService:
         self,
         consent_repo: ConsentRepository,
         audit_service: AuditService,
+        authorization_service: AuthorizationService,
     ) -> None:
         self._consent_repo = consent_repo
         self._audit_service = audit_service
+        self._authz = authorization_service
 
     async def accept_consent(
         self,
         user_id: str,
         payload: ConsentAcceptRequest,
-        role: str,
         ip_address: str | None = None,
     ) -> ConsentResponse:
-        """Accept a consent policy version for a user."""
+        """Accept a consent policy version for a user.
+
+        The actor's role for the audit log is resolved from the
+        ``user_roles`` junction via ``AuthorizationService``.
+        """
         consent_data: JSONRow = {
             "user_id": user_id,
             "policy_version": payload.policy_version,
@@ -37,9 +43,10 @@ class ConsentService:
 
         consent = await self._consent_repo.create(consent_data)
 
+        actor_role = await self._authz.get_primary_role_name(user_id)
         await self._audit_service.log_event(
             user_id=user_id,
-            role=role,
+            role=actor_role,
             action=AuditAction.CONSENT_ACCEPTED,
             resource_type="consent_record",
             resource_id=consent.id,

@@ -7,9 +7,16 @@ from app.core.constants import UserRole
 from app.core.exceptions import ForbiddenError
 from app.schemas.assignment import AssignmentCreateRequest
 from app.services.assignment_service import AssignmentService
+from app.services.authorization_service import AuthorizationService
 
-from tests.conftest import make_user_row
+from tests.conftest import make_user_row, seed_rbac_tables
 from tests.fakes.fake_supabase import FakeSupabase
+
+
+@pytest.fixture(autouse=True)
+def _reset_authz_cache() -> None:
+    """Drop the role-name cache between tests; see test_session_service."""
+    AuthorizationService.clear_cache()
 
 
 async def test_create_assignment_is_idempotent_for_existing_active(
@@ -20,6 +27,7 @@ async def test_create_assignment_is_idempotent_for_existing_active(
     doctor = make_user_row(role=UserRole.DOCTOR, full_name="Dr A")
     patient = make_user_row(role=UserRole.PATIENT, full_name="Pat A")
     fake_db.seed("users", [doctor, patient])
+    seed_rbac_tables(fake_db, user_role_pairs=[("admin-1", UserRole.ADMIN.value)])
 
     payload = AssignmentCreateRequest(
         doctor_id=doctor["id"],
@@ -29,12 +37,10 @@ async def test_create_assignment_is_idempotent_for_existing_active(
     first = await assignment_service.create_assignment(
         payload=payload,
         assigned_by="admin-1",
-        assigned_by_role=UserRole.ADMIN.value,
     )
     second = await assignment_service.create_assignment(
         payload=payload,
         assigned_by="admin-1",
-        assigned_by_role=UserRole.ADMIN.value,
     )
 
     assert first.id == second.id
@@ -58,6 +64,7 @@ async def test_ensure_doctor_can_access_patient_blocks_unassigned(
     doctor = make_user_row(role=UserRole.DOCTOR)
     patient = make_user_row(role=UserRole.PATIENT)
     fake_db.seed("users", [doctor, patient])
+    seed_rbac_tables(fake_db, user_role_pairs=[("admin-1", UserRole.ADMIN.value)])
 
     # No assignment seeded -> access must be denied.
     with pytest.raises(ForbiddenError):
@@ -73,7 +80,6 @@ async def test_ensure_doctor_can_access_patient_blocks_unassigned(
             patient_id=patient["id"],
         ),
         assigned_by="admin-1",
-        assigned_by_role=UserRole.ADMIN.value,
     )
 
     # Should not raise now.

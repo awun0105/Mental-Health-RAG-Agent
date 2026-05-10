@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 from app.core.exceptions import ForbiddenError
-from app.db.repositories.assignment_repo import AssignmentRepository
 from app.db.repositories.permission_repo import PermissionRepository
+from app.db.repositories.user_role_repo import UserRoleRepository
 from app.services.authorization_service import AuthorizationService
 
 from tests.conftest import seed_rbac_tables
@@ -23,7 +23,7 @@ def _make_authorization_service(
     AuthorizationService.clear_cache()
     return AuthorizationService(
         permission_repo=PermissionRepository(db=fake_db),  # type: ignore[arg-type]
-        assignment_repo=AssignmentRepository(db=fake_db),  # type: ignore[arg-type]
+        user_role_repo=UserRoleRepository(db=fake_db),  # type: ignore[arg-type]
         cache_ttl_seconds=cache_ttl_seconds,
     )
 
@@ -144,3 +144,104 @@ async def test_user_with_multiple_roles_inherits_union(
     assert "patient:read" in permissions
     assert "assignment:read" in permissions
     assert "assignment:create" not in permissions
+
+
+@pytest.mark.asyncio
+async def test_get_user_role_names_returns_seeded_roles(
+    fake_db: FakeSupabase,
+) -> None:
+    """Resolves role names via the ``get_user_role_names`` RPC."""
+    user_id = str(uuid4())
+    seed_rbac_tables(fake_db, user_role_pairs=[(user_id, "doctor")])
+    authz = _make_authorization_service(fake_db)
+
+    role_names = await authz.get_user_role_names(user_id)
+
+    assert role_names == {"doctor"}
+
+
+@pytest.mark.asyncio
+async def test_get_user_role_names_returns_empty_for_unseeded_user(
+    fake_db: FakeSupabase,
+) -> None:
+    """A user without a ``user_roles`` row resolves to an empty set."""
+    seed_rbac_tables(fake_db)
+    authz = _make_authorization_service(fake_db)
+
+    assert await authz.get_user_role_names(str(uuid4())) == set()
+
+
+@pytest.mark.asyncio
+async def test_get_user_role_names_unions_multiple_roles(
+    fake_db: FakeSupabase,
+) -> None:
+    """A user with multiple roles resolves the full set."""
+    user_id = str(uuid4())
+    seed_rbac_tables(
+        fake_db,
+        user_role_pairs=[(user_id, "patient"), (user_id, "doctor")],
+    )
+    authz = _make_authorization_service(fake_db)
+
+    assert await authz.get_user_role_names(user_id) == {"patient", "doctor"}
+
+
+@pytest.mark.asyncio
+async def test_get_user_role_names_caches_results(
+    fake_db: FakeSupabase,
+) -> None:
+    """Repeated lookups within the TTL must not re-query the underlying RPC."""
+    user_id = str(uuid4())
+    seed_rbac_tables(fake_db, user_role_pairs=[(user_id, "patient")])
+    authz = _make_authorization_service(fake_db)
+
+    first = await authz.get_user_role_names(user_id)
+
+    fake_db.tables["user_roles"] = []
+
+    second = await authz.get_user_role_names(user_id)
+
+    assert first == second == {"patient"}
+
+
+@pytest.mark.asyncio
+async def test_invalidate_cache_drops_role_cache(
+    fake_db: FakeSupabase,
+) -> None:
+    """``invalidate_cache`` must drop both the permission and the role caches."""
+    user_id = str(uuid4())
+    seed_rbac_tables(fake_db, user_role_pairs=[(user_id, "patient")])
+    authz = _make_authorization_service(fake_db)
+
+    await authz.get_user_role_names(user_id)
+
+    fake_db.tables["user_roles"] = []
+    authz.invalidate_cache(user_id)
+
+    assert await authz.get_user_role_names(user_id) == set()
+
+
+@pytest.mark.asyncio
+async def test_get_primary_role_name_priority_admin_first(
+    fake_db: FakeSupabase,
+) -> None:
+    """With multiple roles, ``admin`` wins regardless of insertion order."""
+    user_id = str(uuid4())
+    seed_rbac_tables(
+        fake_db,
+        user_role_pairs=[(user_id, "patient"), (user_id, "admin")],
+    )
+    authz = _make_authorization_service(fake_db)
+
+    assert await authz.get_primary_role_name(user_id) == "admin"
+
+
+@pytest.mark.asyncio
+async def test_get_primary_role_name_returns_none_for_no_roles(
+    fake_db: FakeSupabase,
+) -> None:
+    """A user with no roles produces no canonical role name."""
+    seed_rbac_tables(fake_db)
+    authz = _make_authorization_service(fake_db)
+
+    assert await authz.get_primary_role_name(str(uuid4())) is None

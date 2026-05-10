@@ -36,7 +36,6 @@ async def start_session(
     """
     return await session_service.start_session(
         user_id=current_user.user_id,
-        role=current_user.role.value,
         metadata=payload.metadata,
         ip_address=request.client.host if request.client is not None else None,
     )
@@ -61,7 +60,6 @@ async def close_session(
     return await session_service.close_session(
         session_id=session_id,
         current_user_id=current_user.user_id,
-        current_user_role=current_user.role.value,
         reason=payload.reason,
         ip_address=request.client.host if request.client is not None else None,
     )
@@ -107,5 +105,4 @@ async def get_session(
     return await session_service.get_session(
         session_id=session_id,
         current_user_id=current_user.user_id,
-        current_user_role=current_user.role.value,
     )

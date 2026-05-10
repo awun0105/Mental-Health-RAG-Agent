@@ -65,7 +65,6 @@ async def create_assignment(
     return await assignment_service.create_assignment(
         payload=payload,
         assigned_by=current_user.user_id,
-        assigned_by_role=current_user.role.value,
         ip_address=request.client.host if request.client is not None else None,
     )
 
@@ -93,7 +92,6 @@ async def deactivate_assignment(
     return await assignment_service.deactivate_assignment(
         assignment_id=assignment_id,
         deactivated_by=current_user.user_id,
-        deactivated_by_role=current_user.role.value,
         ip_address=request.client.host if request.client is not None else None,
     )
 
@@ -173,9 +171,10 @@ async def admin_create_user(
     )
     authz.invalidate_cache(user.id)
 
+    actor_role = await authz.get_primary_role_name(current_user.user_id)
     await audit_service.log_event(
         user_id=current_user.user_id,
-        role=current_user.role.value,
+        role=actor_role,
         action=AuditAction.ROLE_ASSIGNED,
         resource_type="user_role",
         resource_id=f"{user.id}:{role.id}",

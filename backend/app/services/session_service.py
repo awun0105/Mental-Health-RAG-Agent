@@ -16,6 +16,7 @@ from app.db.repositories.consent_repo import ConsentRepository
 from app.db.repositories.session_repo import SessionRepository
 from app.schemas.session import CloseReason, SessionListResponse, SessionResponse
 from app.services.audit_service import AuditService
+from app.services.authorization_service import AuthorizationService
 
 
 class SessionService:
@@ -32,27 +33,30 @@ class SessionService:
         consent_repo: ConsentRepository,
         assignment_repo: AssignmentRepository,
         audit_service: AuditService,
+        authorization_service: AuthorizationService,
     ) -> None:
         self._session_repo = session_repo
         self._consent_repo = consent_repo
         self._assignment_repo = assignment_repo
         self._audit_service = audit_service
+        self._authz = authorization_service
 
     async def start_session(
         self,
         *,
         user_id: str,
-        role: str,
         metadata: dict[str, Any] | None = None,
         ip_address: str | None = None,
     ) -> SessionResponse:
         """Start a new chat session for a patient.
 
         Enforces:
+          * The caller holds the ``patient`` role in ``user_roles``.
           * The caller has accepted the current consent policy version.
           * The caller does not already have another active session.
         """
-        if role != UserRole.PATIENT.value:
+        role_names = await self._authz.get_user_role_names(user_id)
+        if UserRole.PATIENT.value not in role_names:
             raise ForbiddenError("Only patients can start chat sessions")
 
         has_consent = await self._consent_repo.has_accepted_version(
@@ -77,13 +81,14 @@ class SessionService:
 
         session = await self._session_repo.create(session_data)
 
+        primary_role = await self._authz.get_primary_role_name(user_id)
         await self._audit_service.log_event(
             user_id=user_id,
-            role=role,
+            role=primary_role,
             action=AuditAction.SESSION_STARTED,
             resource_type="chat_session",
             resource_id=session.id,
-            metadata={"role_at_start": role},
+            metadata={"role_at_start": primary_role},
             ip_address=ip_address,
         )
 
@@ -94,7 +99,6 @@ class SessionService:
         *,
         session_id: str,
         current_user_id: str,
-        current_user_role: str,
         reason: CloseReason = "user_end",
         ip_address: str | None = None,
     ) -> SessionResponse:
@@ -124,9 +128,10 @@ class SessionService:
         if updated is None:
             raise DatabaseError("Close session returned no data")
 
+        primary_role = await self._authz.get_primary_role_name(current_user_id)
         await self._audit_service.log_event(
             user_id=current_user_id,
-            role=current_user_role,
+            role=primary_role,
             action=AuditAction.SESSION_CLOSED,
             resource_type="chat_session",
             resource_id=updated.id,
@@ -141,9 +146,12 @@ class SessionService:
         *,
         session_id: str,
         current_user_id: str,
-        current_user_role: str,
     ) -> SessionResponse:
         """Return a single session, enforcing RBAC.
+
+        Roles are resolved from the ``user_roles`` junction (via
+        ``AuthorizationService``) rather than from the legacy ``users.role``
+        column or the JWT claim:
 
         * Patient: must be the owner.
         * Doctor: must have an active assignment to the session's patient.
@@ -153,12 +161,14 @@ class SessionService:
         if session is None:
             raise NotFoundError(resource="Chat session", resource_id=session_id)
 
-        if current_user_role == UserRole.PATIENT.value:
+        role_names = await self._authz.get_user_role_names(current_user_id)
+
+        if UserRole.PATIENT.value in role_names:
             if session.user_id != current_user_id:
                 raise ForbiddenError("Patients can only access their own sessions")
             return session
 
-        if current_user_role == UserRole.DOCTOR.value:
+        if UserRole.DOCTOR.value in role_names:
             is_assigned = await self._assignment_repo.is_assigned(
                 doctor_id=current_user_id,
                 patient_id=session.user_id,
