@@ -1,4 +1,5 @@
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -17,12 +18,17 @@ from app.db.repositories.assignment_repo import AssignmentRepository
 from app.db.repositories.audit_repo import AuditRepository
 from app.db.repositories.consent_repo import ConsentRepository
 from app.db.repositories.message_repo import MessageRepository
+from app.db.repositories.permission_repo import PermissionRepository
+from app.db.repositories.role_permission_repo import RolePermissionRepository
+from app.db.repositories.role_repo import RoleRepository
 from app.db.repositories.session_repo import SessionRepository
 from app.db.repositories.user_repo import UserRepository
+from app.db.repositories.user_role_repo import UserRoleRepository
 from app.db.supabase_client import get_supabase_client
 from app.services.assignment_service import AssignmentService
 from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
+from app.services.authorization_service import AuthorizationService
 from app.services.consent_service import ConsentService
 from app.services.session_service import SessionService
 
@@ -74,6 +80,34 @@ def get_message_repo(
 ) -> MessageRepository:
     """Return a message repository instance."""
     return MessageRepository(db=db)
+
+
+def get_role_repo(
+    db: Annotated[Client, Depends(get_supabase)],
+) -> RoleRepository:
+    """Return a role repository instance."""
+    return RoleRepository(db=db)
+
+
+def get_permission_repo(
+    db: Annotated[Client, Depends(get_supabase)],
+) -> PermissionRepository:
+    """Return a permission repository instance."""
+    return PermissionRepository(db=db)
+
+
+def get_user_role_repo(
+    db: Annotated[Client, Depends(get_supabase)],
+) -> UserRoleRepository:
+    """Return a user_roles junction repository instance."""
+    return UserRoleRepository(db=db)
+
+
+def get_role_permission_repo(
+    db: Annotated[Client, Depends(get_supabase)],
+) -> RolePermissionRepository:
+    """Return a role_permissions junction repository instance."""
+    return RolePermissionRepository(db=db)
 
 
 def get_audit_service(
@@ -135,6 +169,17 @@ def get_session_service(
     )
 
 
+def get_authorization_service(
+    permission_repo: Annotated[PermissionRepository, Depends(get_permission_repo)],
+    assignment_repo: Annotated[AssignmentRepository, Depends(get_assignment_repo)],
+) -> AuthorizationService:
+    """Return an authorization service instance."""
+    return AuthorizationService(
+        permission_repo=permission_repo,
+        assignment_repo=assignment_repo,
+    )
+
+
 def get_current_user(
     credentials: Annotated[
         HTTPAuthorizationCredentials,
@@ -175,3 +220,37 @@ def require_current_doctor_or_admin(
     """Require current user to be a doctor or admin."""
     require_roles(current_user, {UserRole.DOCTOR, UserRole.ADMIN})
     return current_user
+
+
+def require_permission(
+    permission_code: str,
+) -> Callable[..., Coroutine[Any, Any, CurrentUserClaims]]:
+    """Build a FastAPI dependency that enforces a single permission code.
+
+    Usage:
+
+        @router.post(...)
+        async def create_x(
+            current_user: Annotated[
+                CurrentUserClaims,
+                Depends(require_permission("x:create")),
+            ],
+        ): ...
+
+    The returned dependency resolves ``CurrentUserClaims`` from the
+    bearer token, looks up the caller's permission codes via the
+    ``AuthorizationService`` (RPC + cache), and raises
+    ``ForbiddenError`` (HTTP 403) when the required code is missing.
+    """
+
+    async def dependency(
+        current_user: Annotated[CurrentUserClaims, Depends(get_current_user)],
+        authz: Annotated[
+            AuthorizationService,
+            Depends(get_authorization_service),
+        ],
+    ) -> CurrentUserClaims:
+        await authz.require_permission(current_user.user_id, permission_code)
+        return current_user
+
+    return dependency

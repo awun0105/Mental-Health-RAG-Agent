@@ -73,4 +73,9 @@ class AuditAction(str, Enum):
     DOCTOR_ASSIGNMENT_CREATED = "doctor_assignment_created"
     ASSIGNMENT_DEACTIVATED = "assignment_deactivated"
 
+    ROLE_ASSIGNED = "role_assigned"
+    ROLE_REMOVED = "role_removed"
+    PERMISSION_ASSIGNED = "permission_assigned"
+    PERMISSION_REMOVED = "permission_removed"
+
     ADMIN_CONFIG_CHANGE = "admin_config_change"

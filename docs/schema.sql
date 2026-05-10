@@ -443,6 +443,127 @@ TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT SELECT, INSERT, UPDATE, DELETE
 ON TABLES TO service_role;
+
+
+-- =============================================================================
+-- 9.5. RBAC tables (User ↔ Role ↔ Permission)
+-- =============================================================================
+--
+-- These tables introduce a full role/permission model alongside the
+-- legacy ``users.role`` VARCHAR column. ``users.role`` is intentionally
+-- kept during the transition so that service-layer ownership and
+-- assignment checks (and the JWT ``role`` claim) continue to work. A
+-- future migration will drop the column once resource-level policies
+-- no longer depend on it.
+--
+-- Companion files:
+--   * ``docs/rbac_migration.sql``       — same DDL, suitable for production migration
+--   * ``docs/rbac_seed.sql``            — system roles, permissions, role→permission mappings
+--   * ``docs/rbac_data_migration.sql``  — backfill ``user_roles`` from ``users.role``
+--
+
+CREATE TABLE IF NOT EXISTS roles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    name VARCHAR(50) NOT NULL UNIQUE,
+    display_name VARCHAR(100) NOT NULL,
+    description TEXT,
+
+    is_system BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT roles_name_not_empty
+        CHECK (char_length(trim(name)) > 0),
+    CONSTRAINT roles_display_name_not_empty
+        CHECK (char_length(trim(display_name)) > 0)
+);
+
+DROP TRIGGER IF EXISTS trg_roles_set_updated_at ON roles;
+
+CREATE TRIGGER trg_roles_set_updated_at
+BEFORE UPDATE ON roles
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_roles_is_system
+ON roles(is_system);
+
+
+CREATE TABLE IF NOT EXISTS permissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    code VARCHAR(100) NOT NULL UNIQUE,
+    module VARCHAR(50) NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    description TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT permissions_code_not_empty
+        CHECK (char_length(trim(code)) > 0),
+    CONSTRAINT permissions_module_not_empty
+        CHECK (char_length(trim(module)) > 0),
+    CONSTRAINT permissions_action_not_empty
+        CHECK (char_length(trim(action)) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_permissions_module
+ON permissions(module);
+
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+
+    assigned_by UUID REFERENCES users(id),
+    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id
+ON user_roles(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_roles_role_id
+ON user_roles(role_id);
+
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    role_id UUID NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission_id UUID NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+
+    granted_by UUID REFERENCES users(id),
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (role_id, permission_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id
+ON role_permissions(role_id);
+
+CREATE INDEX IF NOT EXISTS idx_role_permissions_permission_id
+ON role_permissions(permission_id);
+
+
+CREATE OR REPLACE FUNCTION get_user_permission_codes(p_user_id UUID)
+RETURNS TABLE(code VARCHAR) AS $$
+    SELECT DISTINCT p.code
+    FROM permissions p
+    JOIN role_permissions rp ON rp.permission_id = p.id
+    JOIN user_roles ur ON ur.role_id = rp.role_id
+    WHERE ur.user_id = p_user_id;
+$$ LANGUAGE sql STABLE;
+
+
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON roles, permissions, user_roles, role_permissions
+TO service_role;
+
+GRANT EXECUTE ON FUNCTION get_user_permission_codes(UUID) TO service_role;
+
+
 -- =============================================================================
 -- 10. Optional sanity-check comments
 -- =============================================================================
