@@ -233,6 +233,60 @@ class _FakeSupabaseAuth:
         return _FakeAuthResponse(user=self.next_callback_user)
 
 
+class _FakeRPC:
+    """Stand-in for ``client.rpc(name, params)``.
+
+    Only ``get_user_permission_codes`` is implemented; it walks the
+    in-memory ``user_roles`` ⋈ ``role_permissions`` ⋈ ``permissions``
+    join, mirroring the production Postgres function.
+    """
+
+    def __init__(self, store: FakeSupabase, name: str, params: dict[str, Any]) -> None:
+        self._store = store
+        self._name = name
+        self._params = params
+
+    def execute(self) -> _FakeResult:
+        if self._name != "get_user_permission_codes":
+            raise NotImplementedError(
+                f"FakeSupabase RPC '{self._name}' is not implemented",
+            )
+
+        user_id = self._params.get("p_user_id")
+        if not isinstance(user_id, str):
+            return _FakeResult([])
+
+        user_roles = self._store.tables.get("user_roles", [])
+        role_ids = {
+            r.get("role_id")
+            for r in user_roles
+            if r.get("user_id") == user_id and isinstance(r.get("role_id"), str)
+        }
+        if not role_ids:
+            return _FakeResult([])
+
+        role_permissions = self._store.tables.get("role_permissions", [])
+        permission_ids = {
+            r.get("permission_id")
+            for r in role_permissions
+            if r.get("role_id") in role_ids and isinstance(r.get("permission_id"), str)
+        }
+        if not permission_ids:
+            return _FakeResult([])
+
+        permissions = self._store.tables.get("permissions", [])
+        codes: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for p in permissions:
+            if p.get("id") in permission_ids:
+                code = p.get("code")
+                if isinstance(code, str) and code and code not in seen:
+                    codes.append({"code": code})
+                    seen.add(code)
+
+        return _FakeResult(codes)
+
+
 class FakeSupabase:
     """In-memory Supabase stand-in.
 
@@ -255,6 +309,10 @@ class FakeSupabase:
 
     def table(self, name: str) -> _FakeQuery:
         return _FakeQuery(self, name)
+
+    def rpc(self, name: str, params: dict[str, Any]) -> _FakeRPC:
+        """Stand-in for ``supabase.Client.rpc``."""
+        return _FakeRPC(self, name, params)
 
     def _listen_to_auth_events(self, event: str, session: Any) -> None:
         """Record auth-state-change events emitted by AuthService."""
