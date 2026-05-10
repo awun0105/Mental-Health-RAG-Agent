@@ -36,6 +36,7 @@
 - [Phần 18. Next implementation direction](#phần-18-next-implementation-direction)
 - [Phần 19. Code-quality refactor và automated tests phase 1 (PR #9 + PR #10)](#phần-19-code-quality-refactor-và-automated-tests-phase-1-pr-9--pr-10)
 - [Phần 20. Đóng Milestone 2 — tests phase 2, frontend UI, Google OAuth, Sessions CRUD (PRs #12–#18)](#phần-20-đóng-milestone-2--tests-phase-2-frontend-ui-google-oauth-sessions-crud-prs-12-18)
+- [Phần 21. Full RBAC refactor, admin bootstrap, SQL migration layout, và post-M2 stabilization](#phần-21-full-rbac-refactor-admin-bootstrap-sql-migration-layout-và-post-m2-stabilization)
 
 ---
 
@@ -3377,6 +3378,657 @@ Tính toán cụ thể: nếu redirect là `?access_token=eyJ...`, JWT sẽ xu�
 `?auth_code=<random>&user_name=<urlencoded>` chỉ leak auth_code (single-use, TTL 60s, KHÔNG decode được — chỉ là key vào in-memory dict). Mất auth_code = mất nothing nếu đã expire / đã exchange.
 
 Pattern này cũng dùng được cho phase Linking sau (provide auth_code thay vì gắn provider_user_id trực tiếp vào URL).
+
+---
+
+## Phần 21. Full RBAC refactor, admin bootstrap, SQL migration layout, và post-M2 stabilization
+
+### 21.1 Bối cảnh — vì sao cần refactor RBAC lần nữa
+
+Sau khi §20 đóng Milestone 2 ở mức auth + consent + Google OAuth + sessions CRUD,
+hệ thống vẫn còn một giới hạn kiến trúc:
+
+```text
+users.role
+JWT role claim
+role-based helper dependencies
+```
+
+vẫn là nguồn chính cho authorization. Cách này đủ cho MVP ban đầu nhưng không đủ
+cho "full RBAC" vì:
+
+- một user chỉ có 1 role trực tiếp trên bảng `users`;
+- khó mở rộng permission theo module/action;
+- không có bảng junction để gán nhiều role cho một user;
+- route-level authorization vẫn phụ thuộc role cứng thay vì permission code;
+- khi Google OAuth tạo user mới, cần đảm bảo role được ghi đồng bộ vào RBAC
+  tables, nếu không các endpoint dùng permission sẽ trả 403.
+
+Bug runtime dẫn đến refactor này là:
+
+```text
+Lỗi đọc trạng thái consent (403): Missing permission: consent:read_status
+```
+
+Root cause: user có `users.role='patient'` nhưng chưa có row tương ứng trong
+`user_roles`, trong khi route mới đã enforce bằng permission code
+`consent:read_status`. Do đó backend không resolve được permission qua RPC.
+
+Quyết định:
+
+> `users.role` và JWT `role` được giữ lại để compatibility/display, nhưng source
+> chính cho authorization mới là `roles`, `permissions`, `user_roles`,
+> `role_permissions` + RPC permission resolver.
+
+### 21.2 SQL executable files được chuyển khỏi `docs/`
+
+Trước refactor, các file SQL executable nằm trong `docs/`, ví dụ:
+
+```text
+docs/schema.sql
+docs/rbac_migration.sql
+docs/rbac_seed.sql
+docs/rbac_data_migration.sql
+docs/rbac_phase6_role_names_rpc.sql
+```
+
+Cách đặt này gây nhầm lẫn vì `docs/` nên là tài liệu đọc, không phải nơi chứa
+migration cần apply vào database.
+
+Sau refactor, SQL executable được chuyển sang:
+
+```text
+supabase/migrations/202605110001_initial_schema.sql
+supabase/migrations/202605110002_rbac_core.sql
+supabase/seeds/202605110003_rbac_seed.sql
+supabase/migrations/202605110004_rbac_backfill_user_roles.sql
+supabase/migrations/202605110005_rbac_role_names_rpc.sql
+```
+
+Ý nghĩa từng file:
+
+| File | Mục đích |
+|------|----------|
+| `202605110001_initial_schema.sql` | Schema tổng hợp ban đầu cho application DB, bao gồm các bảng nghiệp vụ chính và RPC hiện tại. |
+| `202605110002_rbac_core.sql` | Thêm RBAC core tables và `get_user_permission_codes`. |
+| `202605110003_rbac_seed.sql` | Seed role/permission mặc định cho `admin`, `doctor`, `patient`. |
+| `202605110004_rbac_backfill_user_roles.sql` | Backfill user cũ từ `users.role` sang `user_roles`. |
+| `202605110005_rbac_role_names_rpc.sql` | Thêm `get_user_role_names` để service-layer resolve role names từ RBAC table. |
+
+Rule mới:
+
+```text
+docs/       = tài liệu giải thích
+supabase/   = SQL executable: migrations + seeds
+```
+
+### 21.3 RBAC data model sau refactor
+
+Các bảng RBAC canonical:
+
+```text
+roles
+permissions
+user_roles
+role_permissions
+```
+
+Quan hệ:
+
+```text
+users
+  ↓ many-to-many
+user_roles
+  ↓
+roles
+  ↓ many-to-many
+role_permissions
+  ↓
+permissions
+```
+
+Ý nghĩa:
+
+- `roles`: định nghĩa role hệ thống như `admin`, `doctor`, `patient`.
+- `permissions`: định nghĩa permission code theo dạng `module:action`.
+- `user_roles`: gán một hoặc nhiều role cho user.
+- `role_permissions`: gán permission cho role.
+
+Permission codes hiện được route/service dùng, ví dụ:
+
+```text
+consent:accept
+consent:read_status
+session:create
+session:read
+session:close
+assignment:create
+assignment:deactivate
+patient:read
+user:create
+role:read
+role:assign
+permission:read
+permission:assign
+```
+
+Điểm quan trọng:
+
+> `users.role` chưa bị xóa. Nó vẫn là compatibility column cho JWT claim,
+> frontend display, local password flow và một số validation legacy. Nhưng các
+> authorization checks mới không nên dựa vào nó.
+
+### 21.4 RPC layer — permission và role name resolution
+
+Hai RPC chính:
+
+```sql
+get_user_permission_codes(p_user_id UUID)
+get_user_role_names(p_user_id UUID)
+```
+
+`get_user_permission_codes` join:
+
+```text
+user_roles
+→ role_permissions
+→ permissions
+```
+
+để trả về danh sách permission code effective cho user.
+
+`get_user_role_names` join:
+
+```text
+user_roles
+→ roles
+```
+
+để trả về danh sách role name mà user đang giữ.
+
+Vì sao cần RPC thay vì query nhiều bước ở Python?
+
+- Permission resolution là logic data-centric.
+- PostgreSQL join rõ ràng hơn và ít round-trip hơn.
+- Backend chỉ cần gọi `client.rpc(...)`.
+- Dễ test bằng FakeSupabase và dễ verify bằng SQL Editor.
+
+Live check khuyến nghị sau khi apply SQL:
+
+```sql
+select name from roles order by name;
+select code from permissions order by code limit 20;
+select * from get_user_permission_codes((select id from users limit 1));
+select * from get_user_role_names((select id from users limit 1));
+```
+
+### 21.5 Repository layer bổ sung
+
+Các repository mới hoặc được mở rộng:
+
+| File | Mục đích |
+|------|----------|
+| `backend/app/db/repositories/role_repo.py` | Data access cho `roles`, gồm lookup theo id/name và list. |
+| `backend/app/db/repositories/permission_repo.py` | Data access cho `permissions`, gồm list và RPC `get_user_permission_codes`. |
+| `backend/app/db/repositories/user_role_repo.py` | Data access cho `user_roles`, assign/remove role, check role, count active users for role, RPC `get_user_role_names`. |
+| `backend/app/db/repositories/role_permission_repo.py` | Data access cho `role_permissions`, grant/revoke permission. |
+
+Một vài decision đáng ghi lại:
+
+- `UserRoleRepository.assign_role()` idempotent: nếu pair `(user_id, role_id)` đã
+  tồn tại thì trả row cũ, không insert duplicate.
+- `UserRoleRepository.count_active_users_for_role()` dùng hai query nhỏ thay vì
+  embedded join để giữ FakeSupabase và Supabase runtime dễ đồng bộ.
+- `PermissionRepository.get_permission_codes_for_user()` chấp nhận cả response
+  shape dạng list string và list dict để resilient với RPC return shape.
+- `UserRoleRepository.get_role_names_for_user()` tương tự, hỗ trợ cả list string
+  và list dict.
+
+### 21.6 AuthorizationService — permission cache và role cache
+
+Thêm service:
+
+```text
+backend/app/services/authorization_service.py
+```
+
+Mục đích:
+
+- resolve effective permissions từ `get_user_permission_codes`;
+- resolve role names từ `get_user_role_names`;
+- enforce `require_permission(user_id, permission_code)`;
+- cung cấp `get_primary_role_name()` cho audit logging;
+- cache permission/role trong process-local cache 5 phút;
+- invalidate cache sau khi assign/remove role.
+
+Flow route-level permission check:
+
+```text
+Request
+  ↓
+get_current_user() decode JWT
+  ↓
+require_permission("consent:read_status")
+  ↓
+AuthorizationService.require_permission(user_id, "consent:read_status")
+  ↓
+PermissionRepository.get_permission_codes_for_user()
+  ↓
+Postgres RPC get_user_permission_codes()
+```
+
+Decision:
+
+> Cache nằm trong memory vì MVP chạy single-process. Nếu deploy multi-process
+> hoặc multi-replica, cache này cần chuyển sang Redis hoặc giảm TTL/disable cache.
+
+### 21.7 FastAPI dependency refactor — từ role helper sang permission helper
+
+`backend/app/api/dependencies.py` được mở rộng:
+
+- thêm `get_role_repo`;
+- thêm `get_permission_repo`;
+- thêm `get_user_role_repo`;
+- thêm `get_role_permission_repo`;
+- thêm `get_authorization_service`;
+- thêm `require_permission(permission_code)`.
+
+Pattern mới:
+
+```python
+current_user: Annotated[
+    CurrentUserClaims,
+    Depends(require_permission("consent:read_status")),
+]
+```
+
+Thay vì:
+
+```python
+Depends(require_current_patient)
+```
+
+Lợi ích:
+
+- route không cần biết role nào được phép;
+- policy nằm ở RBAC seed/data;
+- admin có thể được cấp permission mà không cần hard-code role ở route;
+- sau này thêm `clinic_manager`, `support_admin`, `billing_admin` không phải sửa
+  mọi route.
+
+Role helpers cũ vẫn còn trong codebase để compatibility, nhưng đã được đánh dấu
+là cleanup candidate trong `MILESTONE2_GAP_REPORT.md`.
+
+### 21.8 API RBAC management endpoints
+
+Thêm router:
+
+```text
+backend/app/api/roles.py
+```
+
+Route group:
+
+```text
+GET    /api/v1/admin/roles
+POST   /api/v1/admin/users/{user_id}/roles/{role_id}
+DELETE /api/v1/admin/users/{user_id}/roles/{role_id}
+GET    /api/v1/admin/permissions
+POST   /api/v1/admin/roles/{role_id}/permissions/{permission_id}
+DELETE /api/v1/admin/roles/{role_id}/permissions/{permission_id}
+```
+
+Permission required:
+
+| Endpoint group | Permission |
+|---|---|
+| list roles | `role:read` |
+| assign/remove user role | `role:assign` |
+| list permissions | `permission:read` |
+| assign/remove role permission | `permission:assign` |
+
+Audit actions added/used:
+
+```text
+ROLE_ASSIGNED
+ROLE_REMOVED
+PERMISSION_ASSIGNED
+PERMISSION_REMOVED
+```
+
+Sau mỗi role mutation trên user:
+
+```text
+authz.invalidate_cache(user_id)
+```
+
+để request kế tiếp resolve permission/role mới.
+
+### 21.9 Last active admin guardrail
+
+Decision quan trọng:
+
+```text
+Admin là role, không phải owner duy nhất.
+Hệ thống có thể có nhiều admin.
+Nhưng không được để hệ thống mất admin cuối cùng.
+```
+
+Guardrail đã implement:
+
+```text
+Không cho remove role admin nếu đó là active admin cuối cùng.
+```
+
+Flow trong `DELETE /admin/users/{user_id}/roles/{role_id}`:
+
+```text
+role = role_repo.get_by_id(role_id)
+if role.name == "admin":
+    active_admin_count = user_role_repo.count_active_users_for_role(role_id)
+    if active_admin_count <= 1:
+        raise ForbiddenError("Cannot remove the last active admin role")
+```
+
+Lưu ý:
+
+- Guardrail hiện cover revoke admin role.
+- Các guardrail tương lai nên cover thêm delete/deactivate admin cuối cùng nếu có
+  endpoint deactivate/delete user.
+- Ownership/Super Admin vẫn chưa được tách thành model riêng. Hiện tại chỉ có
+  `admin` role.
+
+### 21.10 AuthService refactor — auto assign canonical RBAC role
+
+`AuthService` constructor được mở rộng:
+
+```python
+AuthService(
+    user_repo,
+    supabase,
+    audit_service,
+    role_repo,
+    user_role_repo,
+)
+```
+
+Local register flow mới:
+
+```text
+POST /auth/register
+  ↓
+AuthService.register()
+  ↓
+role_repo.get_by_name(payload.role.value)
+  ↓
+insert users row with legacy users.role
+  ↓
+user_role_repo.assign_role(user.id, role.id)
+```
+
+Google new-user flow mới:
+
+```text
+Google callback
+  ↓
+_create_or_reject_google_user()
+  ↓
+_bootstrap_role_for_email(email)
+  ↓
+insert users row with users.role
+  ↓
+_assign_initial_role(user_id, role)
+  ↓
+insert user_roles row
+```
+
+Điểm quan trọng:
+
+> User mới không cần chạy SQL tay sau khi register/login Google. Backend tự gán
+> canonical `user_roles` theo role tương ứng.
+
+Nếu seed role thiếu:
+
+```text
+DatabaseError("Role '<role>' is not seeded")
+```
+
+Đây là intentional: lỗi seed/migration phải fail loud, không silently tạo user
+không có permission.
+
+### 21.11 Admin bootstrap bằng `ADMIN_BOOTSTRAP_EMAILS`
+
+Thêm setting:
+
+```env
+ADMIN_BOOTSTRAP_EMAILS=
+```
+
+Flow:
+
+```text
+Google OAuth new user
+  ↓
+email normalized lower-case
+  ↓
+if email in ADMIN_BOOTSTRAP_EMAILS:
+      role = admin
+   else:
+      role = patient
+  ↓
+insert users.role
+  ↓
+insert user_roles
+```
+
+Phạm vi:
+
+- chỉ apply khi tạo **new Google user**;
+- không tự nâng quyền user đã tồn tại;
+- không áp dụng cho local password register;
+- nhiều email admin được phép, phân tách bằng dấu phẩy.
+
+Ví dụ:
+
+```env
+ADMIN_BOOTSTRAP_EMAILS=admin1@example.com,admin2@example.com
+```
+
+Vì sao không hard-code 1 admin duy nhất?
+
+- admin là role vận hành, không phải owner duy nhất;
+- hệ thống thực tế cần nhiều admin;
+- nếu admin duy nhất mất account, hệ thống bị kẹt;
+- guardrail "không remove admin cuối cùng" giải quyết rủi ro mất quyền quản trị.
+
+### 21.12 Existing users backfill
+
+Vì trước refactor user cũ chỉ có `users.role`, cần backfill sang `user_roles`.
+
+SQL:
+
+```sql
+insert into user_roles (user_id, role_id)
+select u.id, r.id
+from users u
+join roles r on r.name = u.role
+on conflict (user_id, role_id) do nothing;
+```
+
+File:
+
+```text
+supabase/migrations/202605110004_rbac_backfill_user_roles.sql
+```
+
+Khi user lỡ apply SQL sai thứ tự trong Supabase SQL Editor, recovery approach là:
+
+1. apply đủ RBAC core tables;
+2. apply seed roles/permissions;
+3. apply backfill;
+4. verify bằng RPC checks.
+
+Không cần drop database nếu migrations idempotent và dùng `if not exists` /
+`on conflict do nothing`.
+
+### 21.13 Consent 403 fix
+
+Trước fix:
+
+```text
+GET /consent/status
+→ require_permission("consent:read_status")
+→ AuthorizationService resolves no permissions
+→ 403 Missing permission: consent:read_status
+```
+
+Sau fix:
+
+```text
+new user register/google
+→ users row created
+→ user_roles row created
+→ get_user_permission_codes(user_id) returns patient permissions
+→ consent:read_status allowed
+```
+
+Điều này giải quyết lỗi:
+
+```text
+Lỗi đọc trạng thái consent (403): Missing permission: consent:read_status
+```
+
+với điều kiện Supabase live DB đã apply đủ migrations/seeds/backfill.
+
+### 21.14 Google OAuth UI/auth flow stabilization trong Streamlit
+
+Trong phase này, Streamlit vẫn là frontend hiện tại. Các thay đổi liên quan auth
+đã làm để smoke test OAuth:
+
+- gộp register/login thành page `Log in or sign up`;
+- thêm `Continue with Google`;
+- gọi backend `/auth/google` để lấy Supabase OAuth URL;
+- dùng `st.link_button` thay cho `st.components.v1.html` để tránh deprecated API;
+- xử lý `auth_code` callback và exchange qua `/auth/google/exchange`;
+- chỉ show `Consent` và `Profile` sau khi login.
+
+Giới hạn còn lại:
+
+```text
+Streamlit session_state không phải browser-persistent auth storage.
+Reload có thể mất login state.
+Cookie-based browser session chưa implement.
+```
+
+Phần migration sang React là một hướng frontend riêng và không ghi chi tiết trong
+tài liệu database/auth implementation này.
+
+### 21.15 Live environment confirmations
+
+Sau khi user apply/verify trên Supabase và smoke test local, các phần sau đã được
+confirm thành công:
+
+1. Real Supabase DB state đã có RBAC tables/seed/RPC/backfill.
+2. Google Cloud + Supabase OAuth dashboard đã cấu hình đúng.
+3. Local register → consent status không còn false 403.
+4. Google OAuth admin bootstrap và login flow đã chạy được.
+
+Phần còn lại sau confirmation:
+
+```text
+5. Implement cookie-based persistent session.
+6. Cleanup legacy code sau khi cookie session ổn định.
+```
+
+### 21.16 Tests và validation sau refactor
+
+Test suite sau refactor:
+
+```text
+uv run pytest backend/tests
+108 passed, 1 warning
+```
+
+Các nhóm test đã được mở rộng:
+
+- auth API/service;
+- Google OAuth admin bootstrap;
+- local register auto-assign `user_roles`;
+- RBAC permission checks;
+- role/permission management endpoints;
+- last-active-admin guardrail;
+- consent permission flow;
+- sessions RBAC;
+- FakeSupabase RPC support.
+
+Các validation khác đã pass:
+
+```text
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy .
+```
+
+### 21.17 Technical debt sau RBAC refactor
+
+Cleanup candidates, nhưng chưa nên xóa trước khi cookie session và React/cutover
+ổn định:
+
+| Candidate | Lý do có thể cleanup |
+|---|---|
+| `require_current_admin`, `require_current_doctor`, `require_current_patient`, `require_current_doctor_or_admin` | Route-level authorization mới dùng `require_permission`. |
+| Role helpers trong `core/security.py` | Nếu không còn dependency cũ dùng nữa thì có thể bỏ. |
+| `UserRoleAssignRequest`, `RolePermissionAssignRequest` | Endpoint hiện dùng path params, không dùng body schema này. |
+| `UserRoleRepository.list_roles_for_user` | Role names hiện resolve bằng RPC `get_user_role_names`. |
+| `RolePermissionRepository.list_permissions_for_role` | Nếu không còn UI/API dùng thì có thể bỏ. |
+
+Không nên remove ở thời điểm này:
+
+| Không remove | Lý do |
+|---|---|
+| `users.role` | Compatibility, JWT claim, frontend display, legacy validation. |
+| JWT `role` claim | Client/display và route legacy vẫn còn phụ thuộc. |
+| `/auth/google/exchange` | Streamlit OAuth bridge vẫn đang dùng. |
+| Password login/register | Cần cho dev/test và local patient accounts. |
+
+### 21.18 Bài học sau RBAC refactor
+
+#### 21.18.1 Full RBAC phải xử lý cả data migration
+
+Chỉ thêm bảng `roles`/`permissions` chưa đủ. User cũ phải có row trong
+`user_roles`, nếu không permission resolver sẽ trả empty set và route sẽ 403.
+
+#### 21.18.2 Backend phải tự assign role cho user mới
+
+Nếu user mới được tạo mà phải chạy SQL tay để assign role thì design chưa đúng.
+`AuthService.register()` và Google new-user flow phải tự ghi `user_roles`.
+
+#### 21.18.3 Admin bootstrap không phải ownership model
+
+`ADMIN_BOOTSTRAP_EMAILS` chỉ là cơ chế tạo admin ban đầu qua Google OAuth. Nó
+không thay thế mô hình owner/super-admin. Nếu sau này cần owner, nên thiết kế
+riêng thay vì ép `admin` chỉ có 1 người.
+
+#### 21.18.4 Permission code tốt hơn hard-code role ở route
+
+Route hỏi:
+
+```text
+User có permission này không?
+```
+
+thay vì:
+
+```text
+User có role admin/doctor/patient không?
+```
+
+Cách này bền hơn khi hệ thống cần thêm role vận hành mới.
+
+#### 21.18.5 SQL phải nằm trong migration/seeds, không nằm trong docs
+
+`docs/` chỉ nên giải thích. SQL executable phải có lifecycle riêng để người sau
+biết apply theo thứ tự, verify và rollback/repair khi cần.
 
 ---
 

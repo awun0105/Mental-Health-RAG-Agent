@@ -1,0 +1,457 @@
+# Frontend Migration To React Tech Stack
+
+**Date:** 2026-05-11
+**Status:** Proposed implementation plan
+**Current frontend:** Streamlit under `frontend/`
+**Target frontend:** React SPA backed by the existing FastAPI API
+
+> Note: The filename keeps the existing `mirgrate` spelling to avoid creating a
+> duplicate note. If desired, rename it later in a documentation cleanup PR.
+
+## 1. Decision Summary
+
+We should migrate the main frontend from Streamlit to a React SPA.
+
+Streamlit was useful for early backend smoke tests, but it is a poor fit for the
+current product direction because the app now needs:
+
+- Browser-native Google OAuth redirect handling.
+- HttpOnly cookie-based persistent sessions.
+- Route guards for logged-out, patient, doctor, and admin users.
+- More complex consent/profile/session/chat UI.
+- Better control over loading, error, empty, and forbidden states.
+
+The backend should remain FastAPI + Supabase + application-level RBAC. The React
+frontend should consume the existing API and should not talk directly to
+Supabase auth.
+
+## 2. Recommended Stack
+
+| Layer | Choice | Reason |
+|---|---|---|
+| Build tool | Vite | Fast dev server, simple static build, good React TypeScript support. |
+| UI framework | React + TypeScript | Browser-native auth/session handling and strong type safety. |
+| Routing | TanStack Router | Type-safe routes, nested layouts, route guards, OAuth callback search params. |
+| Server state | TanStack Query | Caching and refetching for `/auth/me`, consent, profile, sessions, RBAC data. |
+| Styling | Tailwind CSS | Fast custom UI work without locking into a heavy component theme. |
+| UI primitives | Radix UI | Accessible dialogs, dropdowns, tabs, popovers, and form primitives. |
+| Forms | React Hook Form + Zod | Typed validation for login, signup, consent, profile, and admin forms. |
+| API typing | OpenAPI-generated TypeScript types | Keep frontend contracts aligned with FastAPI schemas. |
+| Tests | Vitest + Testing Library + Playwright | Unit/component tests plus browser-level auth and route-flow checks. |
+| Package manager | pnpm | Fast installs and clean lockfile behavior for a JS workspace. |
+
+Do not use Next.js in this phase. The product is currently an authenticated app,
+not an SEO-first public website, and SSR would add operational complexity without
+solving the immediate auth problem.
+
+## 3. Compatibility With Current Backend
+
+The React app should use the current FastAPI API prefix:
+
+```text
+http://localhost:8000/api/v1
+```
+
+The new frontend dev URL should be:
+
+```text
+http://localhost:5173
+```
+
+Required backend compatibility changes:
+
+- Update `FRONTEND_URL` to `http://localhost:5173` for React local dev.
+- Replace wildcard CORS with explicit frontend origins when cookies are enabled.
+- Allow credentialed browser requests from React:
+
+```text
+allow_origins=["http://localhost:5173"]
+allow_credentials=True
+```
+
+Frontend API calls must include cookies:
+
+```ts
+fetch(`${API_BASE_URL}/auth/me`, {
+  credentials: "include",
+});
+```
+
+The frontend should not store JWTs in `localStorage`. The target auth model is:
+
+- Backend sets an HttpOnly session cookie.
+- Browser sends cookie automatically with `credentials: "include"`.
+- React calls `/auth/me` to restore the current user after reload.
+- Logout calls `/auth/logout` and backend clears the cookie.
+
+## 4. Target Auth Flow
+
+### 4.1 Google OAuth
+
+Target flow:
+
+```text
+React /login
+-> GET /api/v1/auth/google
+-> browser redirects to Supabase/Google URL
+-> Google/Supabase redirects to backend /api/v1/auth/google/callback
+-> backend creates/links app user, assigns RBAC roles, sets HttpOnly cookie
+-> backend redirects to React /auth/callback
+-> React calls /api/v1/auth/me
+-> app routes to the appropriate post-login page
+```
+
+Required backend change from the current Streamlit bridge:
+
+- Current flow redirects to `FRONTEND_URL/?auth_code=...`.
+- React target flow should redirect to `FRONTEND_URL/auth/callback` after setting
+  cookie server-side.
+- Keep the existing `/auth/google/exchange` route temporarily until React flow is
+  fully verified, then remove only if no longer referenced.
+
+### 4.2 Password Login
+
+Target flow:
+
+```text
+React /login
+-> POST /api/v1/auth/login with email/password
+-> backend validates credentials and sets HttpOnly cookie
+-> React calls /api/v1/auth/me
+-> app routes to post-login page
+```
+
+The endpoint can still return `TokenResponse` for backward compatibility, but
+React should rely on the cookie and `/auth/me`, not on local token storage.
+
+### 4.3 Logout
+
+Target flow:
+
+```text
+React logout button
+-> POST /api/v1/auth/logout
+-> backend clears cookie
+-> frontend clears query/cache state
+-> redirect to /login
+```
+
+## 5. Target Frontend Structure
+
+Use a new React app in `web/` first. Keep Streamlit untouched until the React app
+passes smoke tests.
+
+```text
+web/
+  index.html
+  package.json
+  pnpm-lock.yaml
+  vite.config.ts
+  tsconfig.json
+  src/
+    app/
+      router.tsx
+      query-client.ts
+      providers.tsx
+    routes/
+      __root.tsx
+      index.tsx
+      login.tsx
+      auth.callback.tsx
+      consent.tsx
+      profile.tsx
+      sessions.tsx
+      admin.tsx
+    features/
+      auth/
+        api.ts
+        hooks.ts
+        components/
+      consent/
+        api.ts
+        hooks.ts
+        components/
+      profile/
+      sessions/
+      admin/
+    lib/
+      api-client.ts
+      env.ts
+      errors.ts
+      route-guards.ts
+    styles/
+      globals.css
+```
+
+Keep the existing Streamlit app under `frontend/` during migration. After React is
+accepted, either:
+
+- Rename `frontend/` to `frontend_streamlit/` and use `web/` as the primary app.
+- Or move Streamlit under `legacy/streamlit/`.
+
+Do not delete Streamlit in the first React PR.
+
+## 6. Route Plan
+
+| Route | Access | Purpose |
+|---|---|---|
+| `/` | Public/auth-aware | Landing or redirect to dashboard when logged in. |
+| `/login` | Guest preferred | Unified log in/sign up page. |
+| `/auth/callback` | Public | OAuth return page; calls `/auth/me`, then redirects. |
+| `/consent` | Auth required | Show consent status and accept current policy. |
+| `/profile` | Auth required | Show current user/profile data. |
+| `/sessions` | Auth required | Start/list/close sessions. |
+| `/admin` | `admin` role or permission required | RBAC/admin management later. |
+
+Guard rules:
+
+- Guest-only pages should redirect logged-in users away from `/login`.
+- Auth-only pages should redirect anonymous users to `/login`.
+- Admin pages should check permission/role from `/auth/me` or a dedicated
+  permissions endpoint.
+- Consent-required pages should redirect users without current consent to
+  `/consent`.
+
+## 7. API Client Plan
+
+Create a single fetch wrapper in `web/src/lib/api-client.ts`.
+
+Required behavior:
+
+- Use `VITE_API_BASE_URL`, defaulting to `http://localhost:8000/api/v1`.
+- Always send `credentials: "include"`.
+- Parse backend error shape consistently.
+- Convert `401` into an unauthenticated app state.
+- Convert `403` into a forbidden UI state.
+- Do not expose raw backend stack traces in the UI.
+
+Example target shape:
+
+```ts
+export async function apiFetch<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...init.headers,
+    },
+  });
+
+  if (!response.ok) {
+    throw await ApiError.fromResponse(response);
+  }
+
+  return response.json() as Promise<T>;
+}
+```
+
+## 8. Implementation Phases
+
+### Phase A - Backend Cookie Session Foundation
+
+Files likely touched:
+
+- `backend/app/core/config.py`
+- `backend/app/core/security.py` or new `backend/app/core/cookies.py`
+- `backend/app/api/auth.py`
+- `backend/app/api/dependencies.py`
+- `backend/app/main.py`
+- `.env.example`
+- `backend/tests/`
+
+Tasks:
+
+1. Add cookie-related config.
+2. Add helpers to set and clear auth cookie.
+3. Update login and Google callback/exchange to set cookie.
+4. Add `POST /auth/logout`.
+5. Update `get_current_user` to accept Bearer token or cookie.
+6. Replace wildcard CORS with configured origins.
+7. Add backend tests for cookie login, cookie `/me`, Bearer compatibility, and
+   logout.
+
+Acceptance criteria:
+
+- `POST /auth/login` sets an auth cookie.
+- `GET /auth/me` works with cookie only.
+- `GET /auth/me` still works with Bearer token.
+- `POST /auth/logout` clears cookie.
+- Backend tests pass.
+
+### Phase B - Scaffold React App
+
+Files likely added:
+
+- `web/package.json`
+- `web/vite.config.ts`
+- `web/tsconfig.json`
+- `web/src/main.tsx`
+- `web/src/app/*`
+- `web/src/lib/*`
+- `web/src/routes/*`
+
+Tasks:
+
+1. Scaffold Vite React TypeScript app.
+2. Add TanStack Router, TanStack Query, Tailwind, Radix, React Hook Form, Zod.
+3. Add environment config for `VITE_API_BASE_URL`.
+4. Add app shell and base layout.
+5. Add API client with `credentials: "include"`.
+6. Add `/auth/me` query and auth provider.
+
+Acceptance criteria:
+
+- `pnpm dev` starts React at `http://localhost:5173`.
+- React can call backend `/health`.
+- React can call `/auth/me` and display logged-out state.
+
+### Phase C - Implement Auth UI
+
+Tasks:
+
+1. Implement `/login` with `Continue with Google` at the top.
+2. Keep password login/signup as secondary dev-friendly paths.
+3. Implement `/auth/callback`.
+4. Implement route guards.
+5. Implement logout.
+6. Verify reload persists login through cookie.
+
+Acceptance criteria:
+
+- Google login works through browser redirect.
+- Password login works and sets persistent cookie.
+- Reload does not log the user out.
+- Logout clears browser session.
+
+### Phase D - Port Current Streamlit Pages
+
+Port only the useful app pages, not Streamlit implementation details.
+
+Tasks:
+
+1. Port consent status and accept flow.
+2. Port profile page.
+3. Port session start/list/close page.
+4. Add basic admin entry page for admin users.
+5. Add consistent loading/error/forbidden UI states.
+
+Acceptance criteria:
+
+- Consent page no longer returns false 403 for valid patient users.
+- Profile page is accessible only after login.
+- Session page respects consent and RBAC behavior.
+- Admin page is hidden or forbidden for non-admin users.
+
+### Phase E - Test And Cutover
+
+Tasks:
+
+1. Add Vitest tests for API client and route guard behavior.
+2. Add Playwright smoke tests for login state, consent page, and logout.
+3. Update README dev commands.
+4. Update `.env.example` to use React frontend URL.
+5. Mark Streamlit as legacy.
+6. Update `docs/_notes/MILESTONE2_GAP_REPORT.md`.
+
+Acceptance criteria:
+
+- Backend test suite passes.
+- Frontend lint/typecheck passes.
+- Playwright smoke tests pass locally or are documented if OAuth credentials are
+  unavailable in CI.
+- User can run backend + React frontend with documented commands.
+
+### Phase F - Remove Legacy Streamlit Code
+
+Only do this after React is accepted.
+
+Tasks:
+
+1. Confirm no active workflow depends on Streamlit.
+2. Move or delete `frontend/` Streamlit files.
+3. Remove Streamlit dependency if it is no longer used elsewhere.
+4. Remove Google `auth_code` exchange bridge if React OAuth callback no longer
+   uses it.
+5. Remove obsolete frontend docs and commands.
+
+Acceptance criteria:
+
+- No Streamlit runtime dependency remains for the product UI.
+- Auth, consent, profile, and session flows still pass smoke tests.
+
+## 9. Environment Variables
+
+Backend:
+
+```env
+BACKEND_URL=http://localhost:8000
+FRONTEND_URL=http://localhost:5173
+ALLOWED_CORS_ORIGINS=http://localhost:5173
+AUTH_COOKIE_NAME=mh_session
+AUTH_COOKIE_MAX_AGE_SECONDS=3600
+AUTH_COOKIE_SECURE=false
+AUTH_COOKIE_SAMESITE=lax
+```
+
+Frontend:
+
+```env
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+Production notes:
+
+- `AUTH_COOKIE_SECURE=true`.
+- `AUTH_COOKIE_SAMESITE=lax` is usually enough for top-level OAuth redirects.
+- Use explicit production frontend origin in CORS.
+- Do not use `allow_origins=["*"]` with credentialed cookies.
+
+## 10. Risks And Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Cookie auth breaks existing Bearer-token tests | Medium | Keep Bearer token support in `get_current_user`. |
+| Google OAuth callback changes break Streamlit | Medium | Keep old exchange route until React cutover is complete. |
+| CORS misconfiguration blocks cookies | High | Use explicit `ALLOWED_CORS_ORIGINS`, `credentials: "include"`, and browser smoke tests. |
+| Frontend drifts from backend schema | Medium | Generate TypeScript API types from FastAPI OpenAPI. |
+| RBAC UI assumes roles instead of permissions | Medium | Prefer backend permission checks; use frontend role checks only for hiding navigation. |
+| Removing Streamlit too early slows debugging | Low | Keep Streamlit until React reaches auth/consent/profile parity. |
+
+## 11. Definition Of Done
+
+The migration is complete when:
+
+- React app is the default frontend documented in README.
+- Google OAuth login works in React.
+- Password login works in React.
+- Reload keeps the user logged in via HttpOnly cookie.
+- Logout clears the session.
+- Consent and Profile are only visible after login.
+- Session page can start/list/close sessions according to backend rules.
+- Backend still passes:
+
+```text
+uv run pytest backend/tests
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy .
+```
+
+- Frontend passes:
+
+```text
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+## 12. Recommended Next Step
+
+Start with Phase A before scaffolding React. Cookie session is the API contract
+React will depend on. Once backend cookie auth is stable, React implementation is
+straightforward and does not need Streamlit-specific workarounds.
