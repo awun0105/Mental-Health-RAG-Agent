@@ -5,7 +5,6 @@ from typing import Any, ClassVar
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import ValidationError
-from supabase import Client
 
 from app.core.config import settings
 from app.core.constants import AuditAction, AuthProvider, UserRole
@@ -16,9 +15,12 @@ from app.core.exceptions import (
     UnauthorizedError,
 )
 from app.db.repositories.base import JSONRow, JSONValue
+from app.db.repositories.role_repo import RoleRepository
 from app.db.repositories.user_repo import UserRepository
+from app.db.repositories.user_role_repo import UserRoleRepository
 from app.schemas.user import TokenResponse, UserCreate, UserLogin, UserResponse
 from app.services.audit_service import AuditService
+from supabase import Client
 
 password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -56,16 +58,24 @@ class AuthService:
         user_repo: UserRepository,
         supabase: Client,
         audit_service: AuditService,
+        role_repo: RoleRepository,
+        user_role_repo: UserRoleRepository,
     ) -> None:
         self._user_repo = user_repo
         self._supabase = supabase
         self._audit_service = audit_service
+        self._role_repo = role_repo
+        self._user_role_repo = user_role_repo
 
     async def register(self, payload: UserCreate) -> UserResponse:
         """Register a local user."""
         email_exists = await self._user_repo.email_exists(payload.email)
         if email_exists:
             raise AlreadyExistsError(resource="User", identifier=payload.email)
+
+        role = await self._role_repo.get_by_name(payload.role.value)
+        if role is None:
+            raise DatabaseError(f"Role '{payload.role.value}' is not seeded")
 
         password_hash = self.hash_password(payload.password)
 
@@ -78,7 +88,13 @@ class AuthService:
             "is_active": True,
         }
 
-        return await self._user_repo.create(user_data)
+        user = await self._user_repo.create(user_data)
+        await self._user_role_repo.assign_role(
+            user_id=user.id,
+            role_id=role.id,
+            assigned_by=None,
+        )
+        return user
 
     async def login(self, payload: UserLogin) -> TokenResponse:
         """Login a local user and return an access token."""
@@ -219,7 +235,9 @@ class AuthService:
              the login (Verify-first policy). The user must log in with
              their password first and then link Google explicitly.
            - If a different Google account already owns the email, also reject.
-           - Otherwise, create a new patient user with ``auth_provider=google``.
+           - Otherwise, create a new user with ``auth_provider=google``.
+             New emails listed in ``ADMIN_BOOTSTRAP_EMAILS`` are created
+             as admins; all other Google users are patients.
         4. Mint an application JWT, audit the login, store the JWT in
            ``_pending_tokens`` keyed by a fresh one-time auth code, and
            return the auth code plus the user's display name so the
@@ -365,12 +383,13 @@ class AuthService:
 
         full_name = self._extract_full_name(metadata, fallback=email)
         avatar_url = self._extract_avatar_url(metadata)
+        role = self._bootstrap_role_for_email(email)
 
         new_user_data: JSONRow = {
             "email": email,
             "password_hash": None,
             "full_name": full_name,
-            "role": UserRole.PATIENT.value,
+            "role": role.value,
             "auth_provider": AuthProvider.GOOGLE.value,
             "provider_user_id": google_sub,
             "avatar_url": avatar_url,
@@ -378,15 +397,46 @@ class AuthService:
         }
         user = await self._user_repo.create(new_user_data)
 
+        await self._assign_initial_role(user_id=user.id, role=role)
+
+        audit_metadata: JSONRow = {"method": "google"}
+        if role is UserRole.ADMIN:
+            audit_metadata["via"] = "google_admin_bootstrap"
+
         await self._audit_service.log_event(
             user_id=user.id,
             role=user.role.value,
             action=AuditAction.USER_REGISTERED,
             resource_type="user",
             resource_id=user.id,
-            metadata={"method": "google"},
+            metadata=audit_metadata,
         )
         return user
+
+    async def _assign_initial_role(self, *, user_id: str, role: UserRole) -> None:
+        """Mirror the legacy ``users.role`` value into canonical ``user_roles``."""
+        role_row = await self._role_repo.get_by_name(role.value)
+        if role_row is None:
+            raise DatabaseError(f"Role '{role.value}' is not seeded")
+
+        await self._user_role_repo.assign_role(
+            user_id=user_id,
+            role_id=role_row.id,
+            assigned_by=None,
+        )
+
+    @staticmethod
+    def _bootstrap_role_for_email(email: str) -> UserRole:
+        """Return admin only for new Google users explicitly listed in env."""
+        normalized_email = email.strip().lower()
+        bootstrap_emails = {
+            item.strip().lower()
+            for item in settings.admin_bootstrap_emails.split(",")
+            if item.strip()
+        }
+        if normalized_email in bootstrap_emails:
+            return UserRole.ADMIN
+        return UserRole.PATIENT
 
     @staticmethod
     def _extract_full_name(metadata: dict[str, Any], *, fallback: str) -> str:

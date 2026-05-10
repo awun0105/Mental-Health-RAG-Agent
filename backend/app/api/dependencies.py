@@ -3,7 +3,6 @@ from typing import Annotated, Any
 
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from supabase import Client
 
 from app.core.constants import UserRole
 from app.core.security import (
@@ -31,6 +30,7 @@ from app.services.auth_service import AuthService
 from app.services.authorization_service import AuthorizationService
 from app.services.consent_service import ConsentService
 from app.services.session_service import SessionService
+from supabase import Client
 
 bearer_scheme = HTTPBearer(auto_error=True)
 
@@ -121,12 +121,16 @@ def get_auth_service(
     user_repo: Annotated[UserRepository, Depends(get_user_repo)],
     supabase: Annotated[Client, Depends(get_supabase)],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
+    role_repo: Annotated[RoleRepository, Depends(get_role_repo)],
+    user_role_repo: Annotated[UserRoleRepository, Depends(get_user_role_repo)],
 ) -> AuthService:
     """Return an auth service instance."""
     return AuthService(
         user_repo=user_repo,
         supabase=supabase,
         audit_service=audit_service,
+        role_repo=role_repo,
+        user_role_repo=user_role_repo,
     )
 
 

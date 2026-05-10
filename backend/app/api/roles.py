@@ -13,7 +13,7 @@ from app.api.dependencies import (
     require_permission,
 )
 from app.core.constants import AuditAction
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError
 from app.core.security import CurrentUserClaims
 from app.db.repositories.permission_repo import PermissionRepository
 from app.db.repositories.role_permission_repo import RolePermissionRepository
@@ -103,6 +103,7 @@ async def remove_role_from_user(
         CurrentUserClaims,
         Depends(require_permission("role:assign")),
     ],
+    role_repo: Annotated[RoleRepository, Depends(get_role_repo)],
     user_role_repo: Annotated[UserRoleRepository, Depends(get_user_role_repo)],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
     authz: Annotated[AuthorizationService, Depends(get_authorization_service)],
@@ -111,12 +112,24 @@ async def remove_role_from_user(
 
     Requires the ``role:assign`` permission.
     """
-    removed = await user_role_repo.remove_role(user_id=user_id, role_id=role_id)
-    if not removed:
+    role = await role_repo.get_by_id(role_id)
+    if role is None:
+        raise NotFoundError(resource="Role", resource_id=role_id)
+
+    if not await user_role_repo.has_role(user_id=user_id, role_id=role_id):
         raise NotFoundError(
             resource="user_role",
             resource_id=f"{user_id}:{role_id}",
         )
+
+    if role.name == "admin":
+        active_admin_count = await user_role_repo.count_active_users_for_role(role_id)
+        if active_admin_count <= 1:
+            raise ForbiddenError("Cannot remove the last active admin role")
+
+    removed = await user_role_repo.remove_role(user_id=user_id, role_id=role_id)
+    if not removed:
+        raise NotFoundError(resource="user_role", resource_id=f"{user_id}:{role_id}")
 
     authz.invalidate_cache(user_id)
 

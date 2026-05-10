@@ -48,8 +48,10 @@ def test_get_google_oauth_url_returns_supabase_url(
 async def test_handle_google_callback_creates_new_patient_for_unknown_email(
     auth_service: AuthService,
     fake_db: FakeSupabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unknown Google email becomes a new patient + USER_REGISTERED audit."""
+    monkeypatch.setattr(settings, "admin_bootstrap_emails", "")
     fake_db.auth.next_callback_user = make_fake_supabase_user(
         user_id="google-sub-001",
         email="newuser@example.com",
@@ -69,6 +71,11 @@ async def test_handle_google_callback_creates_new_patient_for_unknown_email(
     assert created["provider_user_id"] == "google-sub-001"
     assert created["role"] == UserRole.PATIENT.value
     assert created["password_hash"] is None
+    role_id_by_name = {r["name"]: r["id"] for r in fake_db.all_rows("roles")}
+    assert any(
+        ur["user_id"] == created["id"] and ur["role_id"] == role_id_by_name[UserRole.PATIENT.value]
+        for ur in fake_db.all_rows("user_roles")
+    )
 
     audits = fake_db.all_rows("audit_logs")
     actions = [a["action"] for a in audits]
@@ -77,6 +84,76 @@ async def test_handle_google_callback_creates_new_patient_for_unknown_email(
     login_event = next(a for a in audits if a["action"] == AuditAction.USER_LOGIN.value)
     assert login_event["metadata"] == {"method": "google"}
     assert login_event["role"] == UserRole.PATIENT.value
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_bootstraps_new_admin_from_env(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new Google email listed in ADMIN_BOOTSTRAP_EMAILS becomes an admin."""
+    monkeypatch.setattr(
+        settings,
+        "admin_bootstrap_emails",
+        " other@example.com, Bootstrap@Example.com ",
+    )
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-admin",
+        email="bootstrap@example.com",
+        full_name="Bootstrap Admin",
+    )
+
+    auth_code, user_name = await auth_service.handle_google_callback("supabase-code")
+
+    assert auth_code
+    assert user_name == "Bootstrap Admin"
+    created = fake_db.all_rows("users")[0]
+    assert created["role"] == UserRole.ADMIN.value
+
+    role_id_by_name = {r["name"]: r["id"] for r in fake_db.all_rows("roles")}
+    assert any(
+        ur["user_id"] == created["id"] and ur["role_id"] == role_id_by_name[UserRole.ADMIN.value]
+        for ur in fake_db.all_rows("user_roles")
+    )
+
+    audits = fake_db.all_rows("audit_logs")
+    registered = next(a for a in audits if a["action"] == AuditAction.USER_REGISTERED.value)
+    assert registered["role"] == UserRole.ADMIN.value
+    assert registered["metadata"] == {
+        "method": "google",
+        "via": "google_admin_bootstrap",
+    }
+
+
+@pytest.mark.asyncio
+async def test_handle_google_callback_does_not_upgrade_existing_google_user(
+    auth_service: AuthService,
+    fake_db: FakeSupabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADMIN_BOOTSTRAP_EMAILS applies only when creating a new Google user."""
+    monkeypatch.setattr(settings, "admin_bootstrap_emails", "returning@example.com")
+    existing = make_user_row(
+        role=UserRole.PATIENT,
+        email="returning@example.com",
+        full_name="Returning User",
+        auth_provider=AuthProvider.GOOGLE,
+        password_hash="",
+    )
+    existing["provider_user_id"] = "google-sub-existing"
+    fake_db.seed("users", [existing])
+    fake_db.auth.next_callback_user = make_fake_supabase_user(
+        user_id="google-sub-existing",
+        email="returning@example.com",
+    )
+
+    auth_code, _ = await auth_service.handle_google_callback("supabase-code")
+
+    assert auth_code
+    users = fake_db.all_rows("users")
+    assert len(users) == 1
+    assert users[0]["role"] == UserRole.PATIENT.value
 
 
 @pytest.mark.asyncio

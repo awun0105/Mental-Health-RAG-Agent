@@ -142,6 +142,75 @@ def test_remove_role_removes_user_role_row_and_audits(
     assert audit_rows[-1]["action"] == "role_removed"
 
 
+def test_remove_admin_role_blocks_last_active_admin(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """RBAC must not allow revoking the final active admin role."""
+    ids = seed_rbac_tables(fake_db)
+    target_admin = make_user_row(role=UserRole.ADMIN, email="only-admin@example.com")
+    fake_db.tables.setdefault("users", []).append(target_admin)
+    fake_db.tables.setdefault("user_roles", []).append(
+        {
+            "user_id": target_admin["id"],
+            "role_id": ids["roles"]["admin"],
+            "assigned_by": None,
+        },
+    )
+
+    response = client.delete(
+        f"/api/v1/admin/users/{target_admin['id']}/roles/{ids['roles']['admin']}",
+        headers=auth_headers(user_id="admin-1", role=UserRole.ADMIN),
+    )
+
+    assert response.status_code == 403
+    assert any(
+        r["user_id"] == target_admin["id"] and r["role_id"] == ids["roles"]["admin"]
+        for r in fake_db.tables.get("user_roles", [])
+    )
+
+
+def test_remove_admin_role_allows_when_another_active_admin_remains(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """One admin can be revoked as long as another active admin remains."""
+    ids = seed_rbac_tables(fake_db)
+    target_admin = make_user_row(role=UserRole.ADMIN, email="admin-a@example.com")
+    remaining_admin = make_user_row(role=UserRole.ADMIN, email="admin-b@example.com")
+    fake_db.tables.setdefault("users", []).extend([target_admin, remaining_admin])
+    fake_db.tables.setdefault("user_roles", []).extend(
+        [
+            {
+                "user_id": target_admin["id"],
+                "role_id": ids["roles"]["admin"],
+                "assigned_by": None,
+            },
+            {
+                "user_id": remaining_admin["id"],
+                "role_id": ids["roles"]["admin"],
+                "assigned_by": None,
+            },
+        ],
+    )
+
+    response = client.delete(
+        f"/api/v1/admin/users/{target_admin['id']}/roles/{ids['roles']['admin']}",
+        headers=auth_headers(user_id="admin-1", role=UserRole.ADMIN),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "removed"
+    assert not any(
+        r["user_id"] == target_admin["id"] and r["role_id"] == ids["roles"]["admin"]
+        for r in fake_db.tables.get("user_roles", [])
+    )
+    assert any(
+        r["user_id"] == remaining_admin["id"] and r["role_id"] == ids["roles"]["admin"]
+        for r in fake_db.tables.get("user_roles", [])
+    )
+
+
 def test_assign_permission_writes_role_permission_row_and_audits(
     client: TestClient,
     fake_db: FakeSupabase,

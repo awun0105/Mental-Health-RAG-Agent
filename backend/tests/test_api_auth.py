@@ -10,7 +10,7 @@ from __future__ import annotations
 from app.core.constants import AuthProvider, UserRole
 from fastapi.testclient import TestClient
 
-from tests.conftest import auth_headers, make_user_row
+from tests.conftest import auth_headers, make_user_row, seed_rbac_tables
 from tests.fakes.fake_supabase import FakeSupabase, make_fake_supabase_user
 
 
@@ -32,8 +32,13 @@ def _register_payload(
     }
 
 
-def test_register_returns_user_response(client: TestClient) -> None:
+def test_register_returns_user_response(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
     """POST /auth/register creates a new user and returns its public profile."""
+    ids = seed_rbac_tables(fake_db)
+
     response = client.post("/api/v1/auth/register", json=_register_payload())
 
     assert response.status_code == 200
@@ -41,9 +46,16 @@ def test_register_returns_user_response(client: TestClient) -> None:
     assert body["email"] == "alice@example.com"
     assert body["role"] == "patient"
     assert "password_hash" not in body
+    assert any(
+        row["user_id"] == body["id"] and row["role_id"] == ids["roles"]["patient"]
+        for row in fake_db.all_rows("user_roles")
+    )
 
 
-def test_register_ignores_role_field_for_admin_escalation(client: TestClient) -> None:
+def test_register_ignores_role_field_for_admin_escalation(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
     """Sending ``role=admin`` in the body must NOT escalate the new user.
 
     Public self-registration is patient-only. Pydantic drops unknown fields
@@ -51,6 +63,7 @@ def test_register_ignores_role_field_for_admin_escalation(client: TestClient) ->
     before delegating to the service. Both layers must agree that no value
     in the body can result in an admin or doctor account.
     """
+    seed_rbac_tables(fake_db)
     payload = {
         **_register_payload(email="evil@example.com"),
         "role": "admin",
@@ -65,8 +78,12 @@ def test_register_ignores_role_field_for_admin_escalation(client: TestClient) ->
     )
 
 
-def test_register_ignores_role_field_for_doctor_escalation(client: TestClient) -> None:
+def test_register_ignores_role_field_for_doctor_escalation(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
     """Same guard for ``role=doctor`` — must downgrade silently to patient."""
+    seed_rbac_tables(fake_db)
     payload = {
         **_register_payload(email="fakedoc@example.com"),
         "role": "doctor",
@@ -77,8 +94,12 @@ def test_register_ignores_role_field_for_doctor_escalation(client: TestClient) -
     assert response.json()["role"] == "patient"
 
 
-def test_register_duplicate_email_returns_409(client: TestClient) -> None:
+def test_register_duplicate_email_returns_409(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
     """Registering with an already-used email surfaces ConflictError as 409."""
+    seed_rbac_tables(fake_db)
     payload = _register_payload(email="dup@example.com")
     first = client.post("/api/v1/auth/register", json=payload)
     assert first.status_code == 200
@@ -87,8 +108,12 @@ def test_register_duplicate_email_returns_409(client: TestClient) -> None:
     assert second.status_code == 409
 
 
-def test_login_returns_token_and_user(client: TestClient) -> None:
+def test_login_returns_token_and_user(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
     """POST /auth/login returns a Bearer token plus the user payload after register."""
+    seed_rbac_tables(fake_db)
     register_payload = _register_payload(email="bob@example.com", password="pa55word!!")
     register = client.post("/api/v1/auth/register", json=register_payload)
     assert register.status_code == 200
@@ -105,8 +130,12 @@ def test_login_returns_token_and_user(client: TestClient) -> None:
     assert body["user"]["email"] == "bob@example.com"
 
 
-def test_login_wrong_password_returns_401(client: TestClient) -> None:
+def test_login_wrong_password_returns_401(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
     """Wrong password must surface UnauthorizedError as 401."""
+    seed_rbac_tables(fake_db)
     register_payload = _register_payload(email="carol@example.com", password="rightpw99")
     client.post("/api/v1/auth/register", json=register_payload)
 
@@ -165,6 +194,7 @@ def test_google_callback_redirects_to_frontend_with_auth_code(
     fake_db: FakeSupabase,
 ) -> None:
     """A successful Google login redirects to the frontend with an opaque auth code."""
+    seed_rbac_tables(fake_db)
     fake_db.auth.next_callback_user = make_fake_supabase_user(
         user_id="google-sub-route",
         email="route@example.com",
@@ -223,6 +253,7 @@ def test_google_exchange_returns_token_for_valid_code(
     fake_db: FakeSupabase,
 ) -> None:
     """POST /auth/google/exchange trades the one-time code for a real JWT."""
+    seed_rbac_tables(fake_db)
     fake_db.auth.next_callback_user = make_fake_supabase_user(
         user_id="google-sub-exchange",
         email="exchange@example.com",

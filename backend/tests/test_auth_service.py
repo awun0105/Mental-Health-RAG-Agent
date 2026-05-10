@@ -40,6 +40,13 @@ async def test_register_creates_user_with_local_provider(
     assert rows[0]["password_hash"] != "secret-password-123"  # must be hashed
     assert rows[0]["password_hash"].startswith("$2")  # bcrypt prefix
 
+    role_id_by_name = {row["name"]: row["id"] for row in fake_db.all_rows("roles")}
+    user_roles = fake_db.all_rows("user_roles")
+    assert any(
+        row["user_id"] == user.id and row["role_id"] == role_id_by_name["patient"]
+        for row in user_roles
+    )
+
 
 async def test_register_with_existing_email_raises_already_exists(
     auth_service: AuthService,

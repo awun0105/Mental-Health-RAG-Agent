@@ -1,19 +1,24 @@
 from collections.abc import Mapping
 from typing import cast
 
-from supabase import Client
-
 from app.core.exceptions import DatabaseError
 from app.db.repositories.base import BaseRepository, JSONRow, JSONValue
 from app.schemas.rbac import RoleResponse
+from supabase import Client
 
 
 class UserRoleRepository(BaseRepository[JSONRow]):
     """Repository for the ``user_roles`` junction table."""
 
-    def __init__(self, db: Client, role_table: str = "roles") -> None:
+    def __init__(
+        self,
+        db: Client,
+        role_table: str = "roles",
+        user_table: str = "users",
+    ) -> None:
         super().__init__(db=db, table_name="user_roles")
         self._role_table = role_table
+        self._user_table = user_table
 
     def _to_model(self, row: Mapping[str, JSONValue]) -> JSONRow:
         """Return the raw junction row.
@@ -64,6 +69,48 @@ class UserRoleRepository(BaseRepository[JSONRow]):
             raise DatabaseError("Failed to remove role from user") from exc
 
         return bool(result.data)
+
+    async def has_role(self, *, user_id: str, role_id: str) -> bool:
+        """Return whether a user currently has the given role."""
+        return await self._get_pair(user_id=user_id, role_id=role_id) is not None
+
+    async def count_active_users_for_role(self, role_id: str) -> int:
+        """Count active users assigned to ``role_id``.
+
+        Used by admin-role guardrails to prevent removing the last active
+        administrator. Supabase's Python query builder is intentionally
+        used in two small reads rather than relying on an embedded join so
+        the fake test client and service-role runtime stay aligned.
+        """
+        try:
+            result = (
+                self._db.table(self._table_name).select("user_id").eq("role_id", role_id).execute()
+            )
+        except Exception as exc:
+            raise DatabaseError("Failed to list users for role") from exc
+
+        active_count = 0
+        for row in self._rows(result.data):
+            user_id = row.get("user_id")
+            if not isinstance(user_id, str) or not user_id:
+                continue
+
+            try:
+                user_result = (
+                    self._db.table(self._user_table)
+                    .select("id,is_active")
+                    .eq("id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+            except Exception as exc:
+                raise DatabaseError("Failed to fetch user for role guardrail") from exc
+
+            user_row = self._first_row(user_result.data)
+            if user_row is not None and user_row.get("is_active") is True:
+                active_count += 1
+
+        return active_count
 
     async def get_role_names_for_user(self, user_id: str) -> list[str]:
         """Return the distinct role names assigned to ``user_id``.

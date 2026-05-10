@@ -1,10 +1,9 @@
 from collections.abc import Mapping
 
-from supabase import Client
-
 from app.core.exceptions import DatabaseError
 from app.db.repositories.base import BaseRepository, JSONValue
 from app.schemas.rbac import RoleResponse
+from supabase import Client
 
 
 class RoleRepository(BaseRepository[RoleResponse]):

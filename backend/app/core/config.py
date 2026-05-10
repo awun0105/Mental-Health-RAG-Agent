@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # =============================================================================
     google_client_id: str = ""
     google_client_secret: str = ""
+    admin_bootstrap_emails: str = ""
 
     # =============================================================================
     # App URLs

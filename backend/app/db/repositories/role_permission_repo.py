@@ -1,11 +1,10 @@
 from collections.abc import Mapping
 from typing import cast
 
-from supabase import Client
-
 from app.core.exceptions import DatabaseError
 from app.db.repositories.base import BaseRepository, JSONRow, JSONValue
 from app.schemas.rbac import PermissionResponse
+from supabase import Client
 
 
 class RolePermissionRepository(BaseRepository[JSONRow]):

@@ -37,11 +37,11 @@ from app.services.session_service import SessionService
 from fastapi import Depends
 from fastapi.testclient import TestClient
 from jose import jwt
-from supabase import Client
 
+from supabase import Client
 from tests.fakes.fake_supabase import FakeSupabase
 
-# Mirror the seed mapping in ``docs/rbac_seed.sql``. Keep this in sync
+# Mirror the seed mapping in ``supabase/seeds/202605110003_rbac_seed.sql``. Keep this in sync
 # with that file; deviating will silently break route-level RBAC tests.
 _ROLE_PERMISSIONS: dict[str, set[str]] = {
     UserRole.ADMIN.value: {
@@ -146,6 +146,8 @@ def audit_service(audit_repo: AuditRepository) -> AuditService:
 @pytest.fixture
 def auth_service(
     user_repo: UserRepository,
+    role_repo: RoleRepository,
+    user_role_repo: UserRoleRepository,
     fake_db: FakeSupabase,
     audit_service: AuditService,
 ) -> AuthService:
@@ -158,10 +160,13 @@ def auth_service(
     one test cannot leak into another.
     """
     AuthService._pending_tokens.clear()
+    seed_rbac_tables(fake_db)
     return AuthService(
         user_repo=user_repo,
         supabase=cast(Client, fake_db),
         audit_service=audit_service,
+        role_repo=role_repo,
+        user_role_repo=user_role_repo,
     )
 
 
