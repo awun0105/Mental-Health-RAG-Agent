@@ -12,8 +12,10 @@
 -- and intentionally returns each role at most once via the FK uniqueness on
 -- ``user_roles(user_id, role_id)``.
 --
--- Apply order: rbac_migration.sql -> rbac_seed.sql -> rbac_data_migration.sql
--- -> rbac_phase6_role_names_rpc.sql.
+-- Apply order: 202605110002_rbac_core.sql
+-- -> ../seeds/202605110003_rbac_seed.sql
+-- -> 202605110004_rbac_backfill_user_roles.sql
+-- -> 202605110005_rbac_role_names_rpc.sql.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION get_user_role_names(p_user_id UUID)

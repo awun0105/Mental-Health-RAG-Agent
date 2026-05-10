@@ -13,7 +13,7 @@
 --
 -- Idempotent: re-running this file is safe.
 --
--- Apply after ``rbac_migration.sql``.
+-- Apply after ``supabase/migrations/202605110002_rbac_core.sql``.
 --
 -- =============================================================================
 

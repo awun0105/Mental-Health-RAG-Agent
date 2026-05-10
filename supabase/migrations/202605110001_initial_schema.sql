@@ -457,9 +457,9 @@ ON TABLES TO service_role;
 -- no longer depend on it.
 --
 -- Companion files:
---   * ``docs/rbac_migration.sql``       — same DDL, suitable for production migration
---   * ``docs/rbac_seed.sql``            — system roles, permissions, role→permission mappings
---   * ``docs/rbac_data_migration.sql``  — backfill ``user_roles`` from ``users.role``
+--   * ``supabase/migrations/202605110002_rbac_core.sql``
+--   * ``supabase/seeds/202605110003_rbac_seed.sql``
+--   * ``supabase/migrations/202605110004_rbac_backfill_user_roles.sql``
 --
 
 CREATE TABLE IF NOT EXISTS roles (

@@ -121,6 +121,7 @@ FastAPI Backend
 | **`backend/app/ingestion/`** | Document ingestion pipeline for clinical knowledge sources. |
 | **`backend/data/`** | Raw and processed clinical documents; large files are ignored by Git. |
 | **`frontend/`** | Streamlit frontend application. |
+| **`supabase/`** | Versioned Supabase/PostgreSQL migrations and seed SQL. |
 | **`docs/`** | SRDS, data-flow documentation, and agent architecture documentation. |
 | **`_notes/`** | Project notes, setup history, and development logs. |
 
@@ -155,6 +156,10 @@ Mental-Health-Sovereign-Agentic-AI-Platform/
 │   ├── pyproject.toml          # Frontend dependencies
 │   └── main.py                 # Streamlit entrypoint
 │
+├── supabase/
+│   ├── migrations/             # Versioned schema and data migrations
+│   └── seeds/                  # Seed SQL for system roles and permissions
+│
 ├── docs/
 │   ├── SRDS.md                 # Requirements and design specification
 │   ├── DFD.md                  # Data flow documentation
@@ -168,6 +173,8 @@ Mental-Health-Sovereign-Agentic-AI-Platform/
 - `docs/SRDS.md` — main requirements and design specification.
 - `docs/DFD.md` — data flow documentation.
 - `docs/AGENT.md` — agent architecture and workflow notes.
+- `supabase/migrations/` — executable database migrations.
+- `supabase/seeds/` — executable seed SQL.
 - `_notes/[1]setup_process.md` — project setup history and notes.
 
 ## Prerequisites

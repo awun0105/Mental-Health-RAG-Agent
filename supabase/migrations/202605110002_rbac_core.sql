@@ -13,14 +13,14 @@
 --   + get_user_permission_codes(p_user_id UUID) RPC
 --
 -- This migration is additive. ``users.role`` is intentionally NOT dropped
--- here — see ``rbac_data_migration.sql`` for the user→role migration and
+-- here — see ``202605110004_rbac_backfill_user_roles.sql`` for the user→role migration and
 -- the future Phase 6 column-drop migration.
 --
 -- Apply order:
---   1. ``schema.sql``               (base tables + ``set_updated_at``)
---   2. ``rbac_migration.sql``       (this file)
---   3. ``rbac_seed.sql``            (system roles + permissions)
---   4. ``rbac_data_migration.sql``  (backfill ``user_roles`` from ``users.role``)
+--   1. ``202605110001_initial_schema.sql``
+--   2. ``202605110002_rbac_core.sql`` (this file)
+--   3. ``../seeds/202605110003_rbac_seed.sql``
+--   4. ``202605110004_rbac_backfill_user_roles.sql``
 --
 -- =============================================================================
 

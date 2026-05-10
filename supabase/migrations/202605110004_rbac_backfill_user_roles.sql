@@ -12,10 +12,10 @@
 -- continue to work. A future Phase 6 migration will drop the column.
 --
 -- Apply order:
---   1. ``schema.sql``
---   2. ``rbac_migration.sql``
---   3. ``rbac_seed.sql``
---   4. ``rbac_data_migration.sql`` (this file)
+--   1. ``202605110001_initial_schema.sql``
+--   2. ``202605110002_rbac_core.sql``
+--   3. ``../seeds/202605110003_rbac_seed.sql``
+--   4. ``202605110004_rbac_backfill_user_roles.sql`` (this file)
 --
 -- =============================================================================
 
