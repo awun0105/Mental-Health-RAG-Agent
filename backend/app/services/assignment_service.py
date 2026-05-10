@@ -5,6 +5,7 @@ from app.db.repositories.base import JSONRow
 from app.db.repositories.user_repo import UserRepository
 from app.schemas.assignment import AssignmentCreateRequest, AssignmentResponse
 from app.services.audit_service import AuditService
+from app.services.authorization_service import AuthorizationService
 
 
 class AssignmentService:
@@ -15,19 +16,25 @@ class AssignmentService:
         assignment_repo: AssignmentRepository,
         user_repo: UserRepository,
         audit_service: AuditService,
+        authorization_service: AuthorizationService,
     ) -> None:
         self._assignment_repo = assignment_repo
         self._user_repo = user_repo
         self._audit_service = audit_service
+        self._authz = authorization_service
 
     async def create_assignment(
         self,
         payload: AssignmentCreateRequest,
         assigned_by: str,
-        assigned_by_role: str,
         ip_address: str | None = None,
     ) -> AssignmentResponse:
-        """Create a doctor-patient assignment."""
+        """Create a doctor-patient assignment.
+
+        The actor's role for the audit log is resolved from the
+        ``user_roles`` junction via ``AuthorizationService``, not from
+        the JWT or the legacy ``users.role`` column.
+        """
         doctor = await self._user_repo.get_by_id(payload.doctor_id)
         if doctor is None:
             raise NotFoundError(resource="Doctor", resource_id=payload.doctor_id)
@@ -58,9 +65,10 @@ class AssignmentService:
 
         assignment = await self._assignment_repo.create(assignment_data)
 
+        actor_role = await self._authz.get_primary_role_name(assigned_by)
         await self._audit_service.log_event(
             user_id=assigned_by,
-            role=assigned_by_role,
+            role=actor_role,
             action=AuditAction.DOCTOR_ASSIGNMENT_CREATED,
             resource_type="doctor_assignment",
             resource_id=assignment.id,
@@ -77,10 +85,13 @@ class AssignmentService:
         self,
         assignment_id: str,
         deactivated_by: str,
-        deactivated_by_role: str,
         ip_address: str | None = None,
     ) -> AssignmentResponse:
-        """Deactivate a doctor-patient assignment."""
+        """Deactivate a doctor-patient assignment.
+
+        The actor's role for the audit log is resolved from the
+        ``user_roles`` junction via ``AuthorizationService``.
+        """
         assignment = await self._assignment_repo.deactivate(assignment_id)
         if assignment is None:
             raise NotFoundError(
@@ -88,9 +99,10 @@ class AssignmentService:
                 resource_id=assignment_id,
             )
 
+        actor_role = await self._authz.get_primary_role_name(deactivated_by)
         await self._audit_service.log_event(
             user_id=deactivated_by,
-            role=deactivated_by_role,
+            role=actor_role,
             action=AuditAction.ASSIGNMENT_DEACTIVATED,
             resource_type="doctor_assignment",
             resource_id=assignment.id,

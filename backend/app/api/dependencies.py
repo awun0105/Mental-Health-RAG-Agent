@@ -130,14 +130,35 @@ def get_auth_service(
     )
 
 
+def get_authorization_service(
+    permission_repo: Annotated[PermissionRepository, Depends(get_permission_repo)],
+    user_role_repo: Annotated[UserRoleRepository, Depends(get_user_role_repo)],
+) -> AuthorizationService:
+    """Return an authorization service instance.
+
+    Wired with both the ``permissions`` and ``user_roles`` repositories so
+    it can resolve permission codes (route-level checks) and role names
+    (service-layer resource checks) from the canonical RBAC tables.
+    """
+    return AuthorizationService(
+        permission_repo=permission_repo,
+        user_role_repo=user_role_repo,
+    )
+
+
 def get_consent_service(
     consent_repo: Annotated[ConsentRepository, Depends(get_consent_repo)],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
+    authorization_service: Annotated[
+        AuthorizationService,
+        Depends(get_authorization_service),
+    ],
 ) -> ConsentService:
     """Return a consent service instance."""
     return ConsentService(
         consent_repo=consent_repo,
         audit_service=audit_service,
+        authorization_service=authorization_service,
     )
 
 
@@ -145,12 +166,17 @@ def get_assignment_service(
     assignment_repo: Annotated[AssignmentRepository, Depends(get_assignment_repo)],
     user_repo: Annotated[UserRepository, Depends(get_user_repo)],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
+    authorization_service: Annotated[
+        AuthorizationService,
+        Depends(get_authorization_service),
+    ],
 ) -> AssignmentService:
     """Return an assignment service instance."""
     return AssignmentService(
         assignment_repo=assignment_repo,
         user_repo=user_repo,
         audit_service=audit_service,
+        authorization_service=authorization_service,
     )
 
 
@@ -159,6 +185,10 @@ def get_session_service(
     consent_repo: Annotated[ConsentRepository, Depends(get_consent_repo)],
     assignment_repo: Annotated[AssignmentRepository, Depends(get_assignment_repo)],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
+    authorization_service: Annotated[
+        AuthorizationService,
+        Depends(get_authorization_service),
+    ],
 ) -> SessionService:
     """Return a session service instance."""
     return SessionService(
@@ -166,17 +196,7 @@ def get_session_service(
         consent_repo=consent_repo,
         assignment_repo=assignment_repo,
         audit_service=audit_service,
-    )
-
-
-def get_authorization_service(
-    permission_repo: Annotated[PermissionRepository, Depends(get_permission_repo)],
-    assignment_repo: Annotated[AssignmentRepository, Depends(get_assignment_repo)],
-) -> AuthorizationService:
-    """Return an authorization service instance."""
-    return AuthorizationService(
-        permission_repo=permission_repo,
-        assignment_repo=assignment_repo,
+        authorization_service=authorization_service,
     )
 
 

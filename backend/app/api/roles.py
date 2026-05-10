@@ -76,9 +76,10 @@ async def assign_role_to_user(
     )
     authz.invalidate_cache(user_id)
 
+    actor_role = await authz.get_primary_role_name(current_user.user_id)
     await audit_service.log_event(
         user_id=current_user.user_id,
-        role=current_user.role.value,
+        role=actor_role,
         action=AuditAction.ROLE_ASSIGNED,
         resource_type="user_role",
         resource_id=f"{user_id}:{role_id}",
@@ -119,9 +120,10 @@ async def remove_role_from_user(
 
     authz.invalidate_cache(user_id)
 
+    actor_role = await authz.get_primary_role_name(current_user.user_id)
     await audit_service.log_event(
         user_id=current_user.user_id,
-        role=current_user.role.value,
+        role=actor_role,
         action=AuditAction.ROLE_REMOVED,
         resource_type="user_role",
         resource_id=f"{user_id}:{role_id}",
@@ -169,6 +171,7 @@ async def assign_permission_to_role(
         Depends(get_role_permission_repo),
     ],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
+    authz: Annotated[AuthorizationService, Depends(get_authorization_service)],
 ) -> dict[str, str]:
     """Grant a permission to a role.
 
@@ -191,9 +194,10 @@ async def assign_permission_to_role(
         granted_by=current_user.user_id,
     )
 
+    actor_role = await authz.get_primary_role_name(current_user.user_id)
     await audit_service.log_event(
         user_id=current_user.user_id,
-        role=current_user.role.value,
+        role=actor_role,
         action=AuditAction.PERMISSION_ASSIGNED,
         resource_type="role_permission",
         resource_id=f"{role_id}:{permission_id}",
@@ -226,6 +230,7 @@ async def remove_permission_from_role(
         Depends(get_role_permission_repo),
     ],
     audit_service: Annotated[AuditService, Depends(get_audit_service)],
+    authz: Annotated[AuthorizationService, Depends(get_authorization_service)],
 ) -> dict[str, str]:
     """Revoke a permission from a role.
 
@@ -241,9 +246,10 @@ async def remove_permission_from_role(
             resource_id=f"{role_id}:{permission_id}",
         )
 
+    actor_role = await authz.get_primary_role_name(current_user.user_id)
     await audit_service.log_event(
         user_id=current_user.user_id,
-        role=current_user.role.value,
+        role=actor_role,
         action=AuditAction.PERMISSION_REMOVED,
         resource_type="role_permission",
         resource_id=f"{role_id}:{permission_id}",

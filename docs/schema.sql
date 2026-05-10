@@ -564,6 +564,18 @@ TO service_role;
 GRANT EXECUTE ON FUNCTION get_user_permission_codes(UUID) TO service_role;
 
 
+-- Phase 6 PR A — resolve role names from user_roles for the service layer.
+CREATE OR REPLACE FUNCTION get_user_role_names(p_user_id UUID)
+RETURNS TABLE(name VARCHAR) AS $$
+    SELECT r.name
+    FROM roles r
+    JOIN user_roles ur ON ur.role_id = r.id
+    WHERE ur.user_id = p_user_id;
+$$ LANGUAGE sql STABLE;
+
+GRANT EXECUTE ON FUNCTION get_user_role_names(UUID) TO service_role;
+
+
 -- =============================================================================
 -- 10. Optional sanity-check comments
 -- =============================================================================

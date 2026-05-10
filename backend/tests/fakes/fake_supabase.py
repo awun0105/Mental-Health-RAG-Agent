@@ -236,9 +236,15 @@ class _FakeSupabaseAuth:
 class _FakeRPC:
     """Stand-in for ``client.rpc(name, params)``.
 
-    Only ``get_user_permission_codes`` is implemented; it walks the
-    in-memory ``user_roles`` ⋈ ``role_permissions`` ⋈ ``permissions``
-    join, mirroring the production Postgres function.
+    Implements:
+
+      * ``get_user_permission_codes`` — walks the in-memory ``user_roles``
+        ⋈ ``role_permissions`` ⋈ ``permissions`` join, mirroring the
+        production Postgres function.
+      * ``get_user_role_names`` — walks the in-memory ``user_roles`` ⋈
+        ``roles`` join. Used by Phase 6 PR A so service-layer resource
+        checks resolve the actor's roles from ``user_roles`` instead of
+        from the legacy ``users.role`` / JWT claim.
     """
 
     def __init__(self, store: FakeSupabase, name: str, params: dict[str, Any]) -> None:
@@ -247,21 +253,28 @@ class _FakeRPC:
         self._params = params
 
     def execute(self) -> _FakeResult:
-        if self._name != "get_user_permission_codes":
-            raise NotImplementedError(
-                f"FakeSupabase RPC '{self._name}' is not implemented",
-            )
+        if self._name == "get_user_permission_codes":
+            return self._execute_get_user_permission_codes()
+        if self._name == "get_user_role_names":
+            return self._execute_get_user_role_names()
+        raise NotImplementedError(
+            f"FakeSupabase RPC '{self._name}' is not implemented",
+        )
 
-        user_id = self._params.get("p_user_id")
-        if not isinstance(user_id, str):
-            return _FakeResult([])
-
+    def _user_role_ids(self, user_id: str) -> set[str]:
         user_roles = self._store.tables.get("user_roles", [])
-        role_ids = {
+        return {
             r.get("role_id")
             for r in user_roles
             if r.get("user_id") == user_id and isinstance(r.get("role_id"), str)
         }
+
+    def _execute_get_user_permission_codes(self) -> _FakeResult:
+        user_id = self._params.get("p_user_id")
+        if not isinstance(user_id, str):
+            return _FakeResult([])
+
+        role_ids = self._user_role_ids(user_id)
         if not role_ids:
             return _FakeResult([])
 
@@ -285,6 +298,27 @@ class _FakeRPC:
                     seen.add(code)
 
         return _FakeResult(codes)
+
+    def _execute_get_user_role_names(self) -> _FakeResult:
+        user_id = self._params.get("p_user_id")
+        if not isinstance(user_id, str):
+            return _FakeResult([])
+
+        role_ids = self._user_role_ids(user_id)
+        if not role_ids:
+            return _FakeResult([])
+
+        roles = self._store.tables.get("roles", [])
+        names: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for r in roles:
+            if r.get("id") in role_ids:
+                name = r.get("name")
+                if isinstance(name, str) and name and name not in seen:
+                    names.append({"name": name})
+                    seen.add(name)
+
+        return _FakeResult(names)
 
 
 class FakeSupabase:

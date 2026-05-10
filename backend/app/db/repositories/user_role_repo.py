@@ -65,6 +65,38 @@ class UserRoleRepository(BaseRepository[JSONRow]):
 
         return bool(result.data)
 
+    async def get_role_names_for_user(self, user_id: str) -> list[str]:
+        """Return the distinct role names assigned to ``user_id``.
+
+        Calls the ``get_user_role_names`` RPC, which performs the
+        ``roles`` ⋈ ``user_roles`` join and returns one ``name`` per row.
+        Used by ``AuthorizationService`` to resolve roles for service-layer
+        resource checks (session ownership, doctor-patient assignment)
+        without depending on the legacy ``users.role`` / JWT claim.
+        """
+        try:
+            result = self._db.rpc(
+                "get_user_role_names",
+                {"p_user_id": user_id},
+            ).execute()
+        except Exception as exc:
+            raise DatabaseError("Failed to resolve user role names") from exc
+
+        names: list[str] = []
+        data = result.data
+        if not isinstance(data, list):
+            return names
+
+        for row in data:
+            if isinstance(row, dict):
+                name = row.get("name")
+                if isinstance(name, str) and name:
+                    names.append(name)
+            elif isinstance(row, str) and row:
+                names.append(row)
+
+        return names
+
     async def list_roles_for_user(self, user_id: str) -> list[RoleResponse]:
         """Return the user's effective roles by joining via two-step lookup."""
         try:
