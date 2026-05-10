@@ -35,6 +35,7 @@
 - [Phần 17. Checklist đọc lại trước khi tiếp tục](#phần-17-checklist-đọc-lại-trước-khi-tiếp-tục)
 - [Phần 18. Next implementation direction](#phần-18-next-implementation-direction)
 - [Phần 19. Code-quality refactor và automated tests phase 1 (PR #9 + PR #10)](#phần-19-code-quality-refactor-và-automated-tests-phase-1-pr-9--pr-10)
+- [Phần 20. Đóng Milestone 2 — tests phase 2, frontend UI, Google OAuth, Sessions CRUD (PRs #12–#18)](#phần-20-đóng-milestone-2--tests-phase-2-frontend-ui-google-oauth-sessions-crud-prs-12-18)
 
 ---
 
@@ -2603,6 +2604,8 @@ Có hai hướng tiếp theo.
 
 > Cập nhật: phase 1 tests đã có sẵn ở [PR #10](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/10). Foundation hiện đủ chắc để sang Phase 3, miễn ghi nợ phase 2 (API-layer + OAuth tests).
 
+> **Cập nhật 2 (Hướng A đã đóng):** sau §19, Hướng A được làm tuần tự **C → B → A → D**: tests phase 2 ([PR #12](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/12)) → frontend auth UI ([PR #13](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/13)) → RBAC register fix ([PR #14](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/14)) → Google OAuth ([PR #15](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/15) + 2 follow-up bugfix [PR #17](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/17), [PR #18](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/18)) → Sessions CRUD foundation cho Milestone 5 ([PR #16](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/16)). Chi tiết ở [Phần 20](#phần-20-đóng-milestone-2--tests-phase-2-frontend-ui-google-oauth-sessions-crud-prs-12-18). Sau §20, Milestone 2 chính thức đóng và bước tiếp theo là Hướng A→B của Milestone 3 (RAG foundation + LangGraph agents).
+
 ---
 
 ## Phần 19. Code-quality refactor và automated tests phase 1 (PR #9 + PR #10)
@@ -2887,3 +2890,512 @@ Thay vì gộp refactor + tests vào 1 PR khổng lồ (~700 dòng test + ~200 d
 - PR #10: chỉ tests (~9 file, +702 dòng) — review focus vào test design + FakeSupabase contract.
 
 Khi PR #9 merge trước, test trong PR #10 mới có lý do tồn tại (regression guard cho refactor đã land). Ngược lại sẽ confusing.
+
+---
+
+## Phần 20. Đóng Milestone 2 — tests phase 2, frontend UI, Google OAuth, Sessions CRUD (PRs #12–#18)
+
+### 20.1 Bối cảnh — đóng nốt Hướng A của Phần 18
+
+Sau §19, ba việc còn nợ Milestone 2 đã được liệt kê ở [`MILESTONE2_GAP_REPORT.md`](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/blob/master/docs/_notes/MILESTONE2_GAP_REPORT.md):
+
+- DB-2.25 tests phase 2 (mở rộng từ 16 unit/service tests sang FastAPI `TestClient` + RBAC API-layer + OAuth tests).
+- DB-2.26 frontend auth UI (Streamlit pages thật, không còn demo "Check Backend Health").
+- DB-2.27 Google OAuth backend.
+
+Đồng thời, Sessions CRUD foundation (sub-scope của Milestone 5) được kéo về Milestone 2 vì không cần infra mới (Qdrant, RAG, LangGraph) — đủ điều kiện đóng gói cùng đợt với Hướng A.
+
+Thứ tự thực hiện được chốt với người dùng là **C → B → A → D**:
+
+| # | PR | Phase | Scope |
+|---|----|-------|-------|
+| 1 | [PR #12](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/12) | C | Tests phase 2 — 16 → 32 tests |
+| 2 | [PR #13](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/13) | B | Frontend Streamlit auth UI |
+| 3 | [PR #14](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/14) | (insert) | RBAC register fix — vá lỗ hổng escalation phát hiện qua Devin Review trên PR #13 |
+| 4 | [PR #15](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/15) | A | Google OAuth backend (Verify-first) |
+| 5 | [PR #16](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/16) | D | Sessions CRUD foundation (Milestone 5 sub-scope) |
+| 6 | [PR #17](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/17) | A bugfix #1 | Ephemeral Supabase client (lỗi sai hướng — broke PKCE) |
+| 7 | [PR #18](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/18) | A bugfix #2 | Reset auth-state về service_role (đúng hướng) |
+
+PRs #17–#18 không nằm trong plan ban đầu — chúng là post-mortem của một runtime bug chỉ xuất hiện khi smoke test PR #15 trên Supabase thật. Chi tiết ở §20.7.
+
+### 20.2 PR #12 — Tests phase 2 (16 → 32 tests)
+
+#### Mục tiêu
+
+Đóng nốt DB-2.25 bằng API-layer tests, không phải nhồi thêm unit test. Phase 1 đã prove `FakeSupabase` đúng (§19.3); phase 2 mở rộng lên FastAPI `TestClient` để cover full DI chain (route → dependency → service → repo → fake DB).
+
+#### Layout
+
+```text
+backend/tests/
+├── conftest.py                       # +client fixture, +token helper
+├── test_auth_api.py                  # 6 API-layer tests (NEW)
+├── test_consent_api.py               # 4 API-layer tests (NEW)
+├── test_admin_api.py                 # 6 API-layer tests (NEW)
+└── (existing service-layer tests)    # giữ nguyên 16 từ phase 1
+```
+
+Total: **32 tests** (16 service-layer giữ nguyên + 16 API-layer mới).
+
+#### Fixtures bổ sung
+
+`conftest.py` thêm:
+
+- `client` — `TestClient(app)` với `app.dependency_overrides[get_supabase] = lambda: fake_db` để mọi route đều đi qua FakeSupabase chung.
+- `auth_headers(role: UserRole, ...)` — helper sinh JWT thật bằng `core.security.create_access_token` thay vì mock JWT decode (test stronger contract: route + dependency + decode đều chạy thật, chỉ DB là fake).
+
+#### Test coverage matrix mới
+
+| File | Test | Cover gì |
+|------|------|----------|
+| `test_auth_api.py` | POST /auth/register success | api/auth route + AuthService.register full DI chain |
+|  | POST /auth/register dup email → 409 | error mapping `AlreadyExistsError → 409` ở `core/exceptions.py` |
+|  | POST /auth/login success → JWT + user | TokenResponse shape qua wire |
+|  | POST /auth/login wrong password → 401 | error mapping `InvalidCredentialsError → 401` |
+|  | GET /auth/me requires Bearer | `get_current_user` dependency reject anonymous |
+|  | GET /auth/me with valid Bearer | full claims roundtrip |
+| `test_consent_api.py` | POST /consent/accept persists row + audit role | role propagation §19.2.4 qua HTTP |
+|  | GET /consent/status reflects current version | version coherence với `CURRENT_CONSENT_POLICY_VERSION` |
+|  | POST /consent/accept stale version → 400 | version validation |
+|  | POST /consent/accept anonymous → 401 | `get_current_user` reject |
+| `test_admin_api.py` | POST /admin/assignments admin-only → patient gets 403 | RBAC dependency `require_current_admin` |
+|  | POST /admin/assignments admin-only → doctor gets 403 | RBAC reject doctor |
+|  | POST /admin/assignments admin success | happy path + audit `assigned_by_role='admin'` |
+|  | POST /admin/assignments idempotent | giữ idempotency của §19 qua API |
+|  | DELETE /admin/assignments/{id} admin-only | RBAC reject + happy path |
+|  | DELETE /admin/assignments/{id} writes audit role | `deactivated_by_role` cascade từ §19.2.4 |
+
+#### Verification
+
+```bash
+cd backend && uv run pytest -v
+# → 32 passed in ~3s
+
+make check
+# uv run ruff check . → All checks passed!
+# uv run mypy .       → Success: no issues found in 40 source files
+```
+
+Diff: chỉ thêm test files + `httpx>=0.28.1` dev dep (yêu cầu của FastAPI `TestClient`); không đụng production code.
+
+### 20.3 PR #13 — Frontend Streamlit auth UI
+
+#### Mục tiêu
+
+Thay 1 trang demo `main.py` (chỉ có 1 nút "Check Backend Health") bằng multi-page Streamlit app thực sự cho user.
+
+#### Layout
+
+```text
+frontend/
+├── main.py                  ← landing page + sidebar nav
+├── api_client.py            ← shared httpx client (reads BACKEND_URL)
+├── pages/
+│   ├── 1_Register.py        ← email + password (KHÔNG có role selector — fix ở §20.4)
+│   ├── 2_Login.py           ← email + password
+│   ├── 3_Consent.py         ← display current policy version + Accept button
+│   └── 4_Profile.py         ← /auth/me claims viewer
+```
+
+`api_client.py` quy ước:
+
+- `BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")`;
+- token persist trong `st.session_state["jwt"]` (TUYỆT ĐỐI không lưu vào cookies/local storage để giảm risk XSS — cùng logic [Phần 11.3 SRDS](../SRDS.md));
+- mọi call gắn `Authorization: Bearer <jwt>` từ session state;
+- 401 từ backend → clear session_state + redirect Login page.
+
+#### Tại sao chưa thêm Google login button
+
+Phase B này đi trước phase A. Nếu thêm button Google ở UI bây giờ, sẽ là dead-link cho đến khi A xong. Để tránh ship code stub, button được defer sang follow-up sau khi PR #15 merge. Trong scope D thì cũng không cần (Sessions CRUD là pure backend).
+
+#### Verification
+
+```bash
+cd frontend && uv run streamlit run main.py
+# → boot OK, 4 page load OK, register/login/consent/profile click qua được manual
+```
+
+Backend tests (32) vẫn pass; `make check` pass (40 source files).
+
+### 20.4 PR #14 — RBAC register fix (Devin Review finding)
+
+#### Bối cảnh — bug an ninh sót lại từ phase B
+
+Devin Review chạy tự động trên PR #13 đã flag 1 finding **đỏ**:
+
+> 🔴 **Register page allows self-registration as admin/doctor, enabling privilege escalation.** Backend `/auth/register` không restrict role → bất kỳ ai cũng có thể POST `{"email":"...","password":"...","role":"admin"}` rồi nhận admin JWT. Vi phạm AGENT.md §11.3 RBAC matrix.
+
+Đây là bug **thật**, không phải false positive. Cả frontend (selectbox role ở Register page) và backend (`AuthService.register` accept role tự do) đều có lỗ hổng.
+
+#### Fix — chặn ở backend làm gốc, cập nhật frontend cho nhất quán
+
+**Backend:** thêm schema mới `PublicUserRegister`:
+
+```python
+class PublicUserRegister(BaseModel):
+    """Public-facing register payload. Always patient — no role field exposed."""
+    email: EmailStr
+    password: str
+    full_name: str | None = None
+```
+
+`/auth/register` route đổi sang `PublicUserRegister`. Bên trong `AuthService.register`, nếu input là `PublicUserRegister` thì hard-code `role=UserRole.PATIENT`; admin/doctor vẫn có thể tạo qua `/admin/users` (admin-only) bằng schema cũ `UserRegisterRequest` để giữ flexibility.
+
+**Frontend:** xoá selectbox role ở `pages/1_Register.py`. Form chỉ còn email + password + full_name.
+
+#### Regression test
+
+Hai test mới ở `test_auth_api.py`:
+
+```python
+async def test_register_ignores_admin_role_in_payload(client, fake_db):
+    # POST với role=admin trong body → 200 nhưng user.role == 'patient'
+    resp = client.post("/api/v1/auth/register", json={..., "role": "admin"})
+    assert resp.status_code == 200
+    assert resp.json()["user"]["role"] == "patient"
+
+async def test_register_ignores_doctor_role_in_payload(client, fake_db):
+    # tương tự cho doctor
+    ...
+```
+
+`role=admin` / `role=doctor` trong body bị Pydantic ignore (extra field) → backend tự gán `patient`. **Regression guard này đảm bảo nếu tương lai ai unstrict schema, test sẽ fail.**
+
+#### Verification
+
+32 → **34 tests** pass; `make check` pass; tổng diff +98/-21 dòng (5 file: 3 backend + 2 frontend).
+
+### 20.5 PR #15 — Google OAuth backend với Verify-first policy
+
+#### Quyết định kiến trúc — Supabase làm OAuth proxy
+
+Backend KHÔNG gọi Google API trực tiếp. Mọi OAuth flow đi qua `supabase.auth.sign_in_with_oauth()` + `supabase.auth.exchange_code_for_session()`. Lý do:
+
+- Google credentials (Client ID + Secret) lưu trong **Supabase Dashboard → Authentication → Providers → Google**, KHÔNG nằm trong `.env` của backend → ít chỗ leak hơn.
+- Supabase tự handle PKCE, callback validation, token refresh.
+- Backend chỉ cần: gọi 2 method, lấy `supabase_user`, dispatch sang business logic riêng (verify-first, audit, JWT mint).
+
+Trade-off: phụ thuộc cứng vào Supabase (không thể plug provider khác mà không refactor). Chấp nhận vì project đã commit dùng Supabase ở §3.
+
+#### 3 routes + 3 service methods
+
+```text
+GET  /api/v1/auth/google              → AuthService.get_google_oauth_url() → URL Supabase
+GET  /api/v1/auth/google/callback     → AuthService.handle_google_callback(code) → redirect FE với one-time auth_code
+POST /api/v1/auth/google/exchange     → AuthService.exchange_auth_code(auth_code) → TokenResponse JWT
+```
+
+Verify-first policy ở `handle_google_callback`:
+
+```python
+existing = await self._user_repo.get_by_email(google_user.email)
+if existing and existing.auth_provider == AuthProvider.LOCAL:
+    # Email đã đăng ký password trước → từ chối Google login
+    raise UnauthorizedError(
+        "Email đã đăng ký bằng password. Hãy login bằng password rồi link Google từ Profile."
+    )
+if existing and existing.auth_provider == AuthProvider.GOOGLE:
+    # User Google quay lại — login lần thứ N
+    if not existing.is_active:
+        raise UnauthorizedError("User account is inactive")
+    user = existing
+else:
+    # User mới — tạo với auth_provider=google, password_hash=NULL, role=patient
+    user = await self._user_repo.create_google_user(google_user, role=UserRole.PATIENT)
+```
+
+#### Tránh leak JWT vào URL — `_pending_tokens`
+
+Một bug điển hình của OAuth callback là set `Location: /?access_token=eyJ...` trong redirect → JWT lộ trong browser history, server log, referer header. Để tránh:
+
+1. `handle_google_callback` mint JWT NGAY, lưu trong dict `_pending_tokens: dict[str, tuple[TokenResponse, datetime]]` (in-memory, key là một `auth_code` random base64).
+2. Redirect FE với chỉ `?auth_code=<one-time>&user_name=<name>` — KHÔNG có JWT.
+3. FE gọi `POST /auth/google/exchange` với `auth_code` → backend pop entry khỏi `_pending_tokens` (single-use), trả `TokenResponse`.
+4. TTL 60 giây cho mỗi entry (`exchange_auth_code` reject 401 nếu hết hạn).
+5. Replay cùng `auth_code` → 401 (đã pop).
+
+Trade-off: `_pending_tokens` là in-memory class-level dict → KHÔNG horizontal-scale OK. Production cần thay bằng Redis. Acceptable cho MVP single-instance; debt ghi nợ ở [`MILESTONE2_GAP_REPORT.md`](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/blob/master/docs/_notes/MILESTONE2_GAP_REPORT.md).
+
+#### Audit ghi đầy đủ
+
+`AuditAction.USER_REGISTERED` và `AuditAction.USER_LOGIN` đều được log với `metadata={"method": "google"}` và `role=user.role.value` (cascade từ §19.2.4 PR #9). Cho phép Milestone 4 dashboard filter login theo provider.
+
+#### Frontend integration
+
+`pages/2_Login.py` thêm button "Login with Google":
+
+```python
+if st.button("Login with Google"):
+    resp = httpx.get(f"{BACKEND_URL}/api/v1/auth/google")
+    st.markdown(f"[Continue to Google]({resp.json()['url']})")
+```
+
+Sau khi user authorize ở Google + Supabase, callback redirect về `localhost:8501/?auth_code=...&user_name=...`. `main.py` detect query param này → call `/auth/google/exchange` → store JWT vào `st.session_state["jwt"]` → redirect Profile.
+
+#### Verification
+
+Unit tests + API tests: 34 → **52 tests** (PR #15 gốc) pass với FakeSupabase mock OAuth response.
+
+Live smoke test trên Devin VM PHẢI có: Google Cloud Console OAuth client + Supabase Dashboard Provider = Google enabled + redirect URI `https://<project>.supabase.co/auth/v1/callback` thêm vào Google allow-list.
+
+> Smoke test gốc fail → PRs #17–#18 follow-up. Chi tiết ở §20.7.
+
+### 20.6 PR #16 — Sessions CRUD foundation (sub-scope Milestone 5)
+
+#### Mục tiêu
+
+Đóng gói "session lifecycle" (start / close / get / list) như một foundation cho Milestone 5. Không có chat / AI / RAG / LangGraph trong scope này — chỉ CRUD thuần.
+
+Lý do tách: Milestone 3 (RAG) và Milestone 4 (LangGraph agents) cần infra mới (Qdrant, OpenAI embeddings, DSM-5 ingestion). Sessions CRUD không cần gì ngoài Supabase đã có. Tách trước giúp khi M3+M4 vào sau, M5 chỉ phải gắn AI vào lifecycle đã sẵn — không tạo throwaway code.
+
+#### 4 routes
+
+| Method | Path | Auth | Behavior |
+|--------|------|------|----------|
+| POST | `/api/v1/sessions` | Patient (JWT) | Start session — consent gate + one-active gate |
+| POST | `/api/v1/sessions/{id}/close` | Owner | Close session — idempotent |
+| GET | `/api/v1/sessions/{id}` | Owner / assigned doctor | Read 1 session |
+| GET | `/api/v1/sessions/me` | Patient | List own sessions với pagination |
+
+#### 5 design decisions chốt với user (default được chọn cho cả 5)
+
+1. **`close_reason` enum default `user_end`** — schema thêm enum `SessionCloseReason` (`user_end | system_timeout | doctor_intervention`) thay vì free text → query analytics dễ.
+2. **One-active policy: 409 Conflict** nếu patient đã có session `status=active` khi gọi POST. Giảm noise data + buộc client phải close session cũ trước.
+3. **Consent gate: 403 Forbidden** nếu user chưa accept `CURRENT_CONSENT_POLICY_VERSION` (`v1`) trước khi start. Không silent-skip — user phải qua trang Consent (PR #13) trước.
+4. **Defer M5 chat features** — không xử lý message AI / streaming / pagination message ở PR này. PR sau ở Milestone 5 sẽ thêm.
+5. **Pure backend D3** — không có frontend chat page mới. Test = service tests + API tests (RBAC + lifecycle), không có Streamlit UI cho sessions.
+
+#### Idempotent close
+
+`POST /sessions/{id}/close` được gọi 2 lần liên tiếp:
+
+- lần 1: status `active → ended`, audit `session_closed` với `metadata.reason='user_end'`.
+- lần 2: status đã `ended` → no-op, KHÔNG audit duplicate row, return 200 (giống behavior `AssignmentService.create_assignment` từ §19).
+
+#### RBAC matrix cho session
+
+```text
+patient(self):  POST /sessions, POST close own, GET own, GET /sessions/me
+patient(other): 403 hết
+doctor:         GET /sessions/{id} CHỈ KHI có active assignment với patient owner;
+                KHÔNG được POST/close (chỉ patient close session của họ)
+admin:          giống doctor — read-only
+```
+
+`api/sessions.py` dependency: tái sử dụng `require_current_patient` (cho start/close/list) và viết mới `require_session_reader` (cho GET single — check ownership hoặc assignment).
+
+#### Test coverage
+
+23 test mới (12 service + 3 repo + 8 API):
+
+| Layer | Cover gì |
+|-------|----------|
+| service | start consent gate, start one-active reject, close idempotent, RBAC patient owns close, RBAC doctor blocked from close, list pagination, close audit metadata, ... |
+| repo | `get_active_for_patient` returns active only; `list_for_patient` orders desc + paginates; idempotent ops |
+| api | full DI: 200 happy path, 403 consent, 409 one-active, 403 wrong patient, 200 doctor reads assigned, 403 doctor reads unassigned, ... |
+
+50 → **73 tests** pass; `make check` pass (45 source files).
+
+### 20.7 PRs #17 + #18 — Google OAuth runtime bug saga (postgrest 42501 + PKCE)
+
+#### Bug #1 — postgrest 42501 sau smoke test PR #15
+
+Khi smoke test PR #15 trên Devin VM (Supabase + Google thật), backend log show:
+
+```text
+postgrest.exceptions.APIError: {
+  'message': 'permission denied for table users',
+  'code': '42501',
+  'hint': 'Grant the required privileges to the current role with: GRANT SELECT ON public.users TO authenticated;',
+}
+```
+
+User thấy: `localhost:8501/?google_error=Failed+to+fetch+user+by+provider+identity` thay vì JWT.
+
+**Root cause:** `supabase-py` `Client` maintain 1 auth state duy nhất. Khi `auth.exchange_code_for_session(code)` chạy, nó internal dispatch event `SIGNED_IN` → swap `Authorization` header của PostgREST từ `Bearer <service_role_key>` sang `Bearer <user_jwt>`. Câu query ngay sau đó (`get_by_provider_identity` trong `handle_google_callback`) giờ đi dưới role `authenticated` → RLS reject → 42501.
+
+Đây không phải lỗi config Supabase (không thể GRANT SELECT cho `authenticated` được vì thế là tự bypass RLS). Đây là **bug hành vi không tài liệu** của supabase-py.
+
+#### Attempt sai hướng — PR #17 Ephemeral client
+
+PR #17 thử: tạo 1 `Client` mới mỗi khi gọi OAuth method:
+
+```python
+def _ephemeral_supabase_client(self) -> Client:
+    return create_client(settings.supabase_url, settings.supabase_key)
+
+# In get_google_oauth_url + _exchange_supabase_code:
+response = self._ephemeral_supabase_client().auth.sign_in_with_oauth(...)
+session = self._ephemeral_supabase_client().auth.exchange_code_for_session(...)
+```
+
+Logic: client A handle request 1 (sign_in_with_oauth) → client A bị GC → request 2 dùng client B mới (exchange_code_for_session) → client B bị mutate state nhưng KHÔNG chia sẻ với `self._supabase` (cái dùng cho repo) → repo vẫn `service_role` OK.
+
+Tests (FakeSupabase) đều pass; `make check` pass; merged.
+
+**Smoke test thất bại lần 2:** `localhost:8501/?google_error=Google+login+failed` (khác lần trước, không còn 42501).
+
+**Root cause của fix sai:** PKCE flow yêu cầu `code_verifier` được generate ở request 1 (lúc redirect đi Google) phải được persist để request 2 (lúc exchange code) đọc lại. supabase-py persist verifier vào **storage của Client instance** (mặc định in-memory). PR #17 tạo 2 instance khác nhau → instance A có verifier nhưng đã GC; instance B mới tinh không có verifier → Supabase reject exchange với "Google login failed".
+
+→ Ephemeral client phá PKCE. Sai hướng. Cần revert.
+
+#### Fix đúng — PR #18 Reset auth-state
+
+Quay lại dùng `self._supabase` singleton cho cả 2 OAuth call (verifier survive OK), nhưng thêm 1 hook reset auth state về `service_role` SAU khi exchange:
+
+```python
+def _reset_supabase_to_service_role(self) -> None:
+    """Restore the shared Supabase client's auth state to service_role.
+
+    Re-emits SIGNED_OUT(None) — the same hook supabase-py uses on logout —
+    which nulls cached PostgREST/storage/functions clients (so they lazy-
+    re-init with refreshed headers) and rewrites
+    options.headers["Authorization"] back to Bearer <supabase_key>.
+    No network call, deterministic, idempotent.
+    """
+    listen = getattr(self._supabase, "_listen_to_auth_events", None)
+    if callable(listen):
+        listen("SIGNED_OUT", None)
+
+def _exchange_supabase_code(self, code: str) -> Any:
+    callback_url = f"{settings.backend_url}/api/v1/auth/google/callback"
+    try:
+        try:
+            session_response = self._supabase.auth.exchange_code_for_session(
+                {"auth_code": code, "code_verifier": "", "redirect_to": callback_url}
+            )
+        except Exception as exc:
+            raise UnauthorizedError("Google login failed") from exc
+    finally:
+        # Always reset, including on exchange failure — partial mutation possible.
+        self._reset_supabase_to_service_role()
+    ...
+```
+
+**Vì sao dispatch `SIGNED_OUT` thay vì `auth.sign_out({"scope":"local"})`:** sign_out gọi network HTTP DELETE tới Supabase Auth endpoint (revoke session bên server) — không cần thiết vì JWT user đã được mint thành app JWT, mục đích duy nhất ở đây là reset client-side header. Dispatch event là pure client-side, deterministic, không network.
+
+#### Tests update cho PR #18
+
+```python
+# Removed (assertion sai, dựa trên ephemeral approach của PR #17):
+test_oauth_uses_ephemeral_client_so_db_state_is_isolated
+
+# Added:
+async def test_handle_google_callback_resets_auth_state_after_exchange(...):
+    # Sau exchange thành công, expect ("SIGNED_OUT", None) đã được dispatch
+    auth_code, _ = await auth_service.handle_google_callback("any-code")
+    assert fake_db.auth_events_received[-1] == ("SIGNED_OUT", None)
+
+async def test_handle_google_callback_resets_auth_state_even_on_exchange_failure(...):
+    # Khi exchange raise (Supabase reject), state vẫn được reset
+    fake_db.auth.exchange_should_fail = True
+    with pytest.raises(UnauthorizedError):
+        await auth_service.handle_google_callback("any-code")
+    assert fake_db.auth_events_received[-1] == ("SIGNED_OUT", None)
+```
+
+`FakeSupabase` thêm `auth_events_received: list[tuple[str, Any]]` + `_listen_to_auth_events(event, session)` recorder để service test có thể assert hành vi reset mà không cần Supabase thật.
+
+`make check` pass; **75 tests** pass.
+
+### 20.8 Smoke test trên Devin VM — kết quả 5/5 PASS sau PR #18
+
+Plan: 5 adversarial assertions, mỗi cái thiết kế để fail nếu fix sai.
+
+| # | Assertion | Adversarial framing | Result |
+|---|-----------|--------------------|--------|
+| 1 | `GET /auth/google` trả URL Supabase với `provider=google` + PKCE challenge | Naive impl gọi Google trực tiếp hoặc trả URL rỗng | PASS |
+| 2 | Final callback URL có `auth_code=` + `user_name=` và NONE của `access_token`/`Bearer`/`eyJ` | Naive impl đặt `access_token=` trong URL → AGENT.md §11 violation | PASS |
+| 3 | `POST /google/exchange` trả 200 với `email == GOOGLE_TEST_EMAIL` + JWT `role == "patient"` | Naive impl dùng Supabase JWT thay vì app JWT (RBAC mismatch); hoặc JWT có `role=admin` (PR #14 broken) | PASS |
+| 4 | Replay cùng `auth_code` → 401 | Weak impl quên pop khỏi `_pending_tokens` → vô hạn replay | PASS |
+| 5 | `users` row: `auth_provider='google'`, `password_hash IS NULL`, `role='patient'`; `audit_logs.user_login` row có `metadata.method='google'` và `role='patient'` | Buggy impl ghi `auth_provider='local'` hoặc hash empty password; `role` NULL trong audit | PASS |
+
+Live data verified bằng Python supabase client:
+
+```text
+users[f4bf737c-c808-4a06-bceb-8f43e723e41c]:
+  email='devinaitesting@gmail.com', role='patient', auth_provider='google',
+  password_hash=None, is_active=True
+
+audit_logs (newest first):
+  user_login      role='patient'  metadata={'method':'google'}
+  user_registered role='patient'  metadata={'method':'google'}
+```
+
+Smoke test report đính kèm trong [comment trên PR #18](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/18). Recording bị mất khi shell restart giữa execution; evidence dùng raw text output + 1 screenshot Streamlit page sau callback.
+
+### 20.9 Bài học mới
+
+#### 20.9.1 Test coverage giả khi mock không khớp library behavior
+
+PR #17 có 100% test pass với FakeSupabase (FakeSupabase không simulate auth state mutation của `exchange_code_for_session`), `make check` xanh, mypy strict pass. Smoke test thật MỚI lộ ra fix sai hướng. Bài học:
+
+- **Mock chỉ chứng minh logic của TA đúng, không chứng minh assumption về library đúng.** Khi assumption về library sai (ephemeral client lưu PKCE verifier ở storage chia sẻ), mock cũng sai theo → test pass giả.
+- **Smoke test thật trên infra production-like là không thể skip cho integration với external service** — kể cả khi 100 test mock pass.
+- Sau PR #18, FakeSupabase được mở rộng để **record auth event dispatch** (`auth_events_received`) — biến contract "reset state" thành thứ test được. Đây là pattern: nếu bug runtime đã từng trượt qua mock, sau khi fix phải mở rộng mock contract để bug tương tự không trượt lại.
+
+#### 20.9.2 PR sequential thắng PR khổng lồ — đã prove qua C → B → A → D
+
+Phase này có 7 PR (#12, #13, #14, #15, #16, #17, #18) thay vì 1 PR khổng lồ. Lợi ích thấy rõ:
+
+- **PR #14 vá lỗ hổng escalation** chỉ +98/-21 dòng, review trong 5 phút. Nếu gộp với PR #13 frontend (~500 dòng), reviewer rất dễ miss.
+- **PRs #17–#18 bugfix** không phải cần revert toàn bộ phase A. Chỉ cần thêm 2 PR follow-up nhỏ.
+- **PR #16 Sessions CRUD** không bị ảnh hưởng bởi bug Google OAuth — vì code không đụng vào nhau, có thể merge song song nếu cần (thực tế làm tuần tự).
+
+Trade-off: 7 PR review effort > 1 PR review effort. Nhưng cost-of-bug khi miss escalation finding ở 1 PR khổng lồ >> overhead review 7 PR nhỏ.
+
+#### 20.9.3 Devin Review = 1 cặp mắt extra, đáng tin cho finding security
+
+Devin Review tự chạy trên PR #13 và bắt được lỗ hổng escalation trước khi user thấy. Đây không phải false positive — là bug thật, vi phạm AGENT.md §11.3 RBAC matrix. Bài học:
+
+- **Auto code review tool nên được treat as input vào checklist trước khi merge,** không phải background noise.
+- Khi tool flag finding đỏ về security, dừng phase đang làm và fix immediate (PR #14 chen ngang giữa B → A) thay vì defer. Chi phí defer thường > chi phí fix ngay.
+
+#### 20.9.4 Verify-first chặn được account takeover qua provider mới
+
+Nếu auto-link Google account theo email (lax policy):
+
+> Attacker biết email victim đã đăng ký password ở app này → attacker tạo Google account với cùng email đó (Google không yêu cầu chứng minh ownership email cho gmail.com — bất kỳ ai có thể sign up với bất kỳ chuỗi nào trước @gmail.com) → attacker login Google → app auto-link → attacker vào account victim.
+
+Verify-first đóng đường này:
+
+- Nếu email Google trùng account local-password → reject Google login, redirect "Vui lòng login bằng password trước rồi link Google từ Profile."
+- Linking thật sự yêu cầu user authenticate ownership email qua password trước.
+
+Trade-off: UX kém hơn (user phải login local → link manual). Acceptable vì đây là health app — security >> convenience. Documented ở [`MILESTONE2_GAP_REPORT.md`](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/blob/master/docs/_notes/MILESTONE2_GAP_REPORT.md) §8 risk #3.
+
+#### 20.9.5 One-time auth code thay vì JWT trong URL
+
+Tính toán cụ thể: nếu redirect là `?access_token=eyJ...`, JWT sẽ xuất hiện trong:
+
+- browser history (persist disk-based);
+- referer header gửi tới external resources nếu page có image/script bên thứ 3;
+- server access log (nginx, CloudFlare default log full URL);
+- bookmarks nếu user accidental save.
+
+`?auth_code=<random>&user_name=<urlencoded>` chỉ leak auth_code (single-use, TTL 60s, KHÔNG decode được — chỉ là key vào in-memory dict). Mất auth_code = mất nothing nếu đã expire / đã exchange.
+
+Pattern này cũng dùng được cho phase Linking sau (provide auth_code thay vì gắn provider_user_id trực tiếp vào URL).
+
+---
+
+## Phụ lục — Chuỗi PR Milestone 2 đầy đủ
+
+| # | PR | Title | Phần |
+|---|----|-------|------|
+| 1 | [#6](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/6) | Refactor docs Markdown | (audit) |
+| 2 | [#7](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/7) | Fix `assigned_at` → `created_at` ordering | (audit) |
+| 3 | [#8](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/8) | Add `MILESTONE2_GAP_REPORT.md` | (audit) |
+| 4 | [#9](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/9) | Code-quality refactor (DRY + audit role) | §19.2 |
+| 5 | [#10](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/10) | Automated tests phase 1 (16 tests) | §19.3 |
+| 6 | [#11](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/11) | Sync notes với PR #9 + PR #10 | (docs) |
+| 7 | [#12](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/12) | Tests phase 2 (16 → 32 tests) | §20.2 |
+| 8 | [#13](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/13) | Frontend Streamlit auth UI | §20.3 |
+| 9 | [#14](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/14) | RBAC register fix (privilege escalation) | §20.4 |
+| 10 | [#15](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/15) | Google OAuth backend (Verify-first) | §20.5 |
+| 11 | [#16](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/16) | Sessions CRUD foundation | §20.6 |
+| 12 | [#17](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/17) | Ephemeral client (sai hướng — broke PKCE) | §20.7 |
+| 13 | [#18](https://github.com/awun0105/Mental-Health-Sovereign-Agentic-AI-Platform/pull/18) | Reset auth-state về service_role (đúng hướng) | §20.7 |
+
+Total: 13 PR cho Milestone 2 (gồm cả audit/refactor/docs ở §19 + đóng nốt ở §20). 75 tests pass; `make check` pass (45 source files); 1 live smoke test pass 5/5 trên Supabase + Google thật.
