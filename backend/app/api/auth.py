@@ -1,12 +1,13 @@
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import RedirectResponse
 
 from app.api.dependencies import get_auth_service, get_current_user
 from app.core.config import settings
 from app.core.constants import UserRole
+from app.core.cookies import clear_auth_cookie, set_auth_cookie
 from app.core.exceptions import AppException
 from app.core.security import CurrentUserClaims
 from app.schemas.user import (
@@ -45,10 +46,13 @@ async def register(
 @router.post("/login", response_model=TokenResponse)
 async def login(
     payload: UserLogin,
+    response: Response,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> TokenResponse:
     """Login a local user and return an app JWT."""
-    return await auth_service.login(payload)
+    token_response = await auth_service.login(payload)
+    set_auth_cookie(response, token_response.access_token)
+    return token_response
 
 
 @router.get("/me")
@@ -102,7 +106,21 @@ async def google_callback(
 @router.post("/google/exchange", response_model=TokenResponse)
 async def google_exchange(
     payload: GoogleExchangeRequest,
+    response: Response,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> TokenResponse:
     """Exchange a one-time Google auth code for the application JWT."""
-    return auth_service.exchange_auth_code(payload.auth_code)
+    token_response = auth_service.exchange_auth_code(payload.auth_code)
+    set_auth_cookie(response, token_response.access_token)
+    return token_response
+
+
+@router.post("/logout")
+async def logout(response: Response) -> dict[str, str]:
+    """Clear the browser auth cookie.
+
+    Bearer tokens are stateless and remain valid until expiry; the logout
+    endpoint only controls the browser cookie session.
+    """
+    clear_auth_cookie(response)
+    return {"status": "logged_out"}

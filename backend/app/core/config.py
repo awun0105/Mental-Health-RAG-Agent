@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiration_minutes: int = 60
+    auth_cookie_name: str = "mh_access_token"
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"
+    auth_cookie_domain: str = ""
+    cors_allow_origins: str = "http://localhost:5173,http://localhost:8501"
 
     # =============================================================================
     # OAuth (Google)

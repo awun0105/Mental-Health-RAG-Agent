@@ -7,6 +7,7 @@ These tests exercise the full DI chain:
 
 from __future__ import annotations
 
+from app.core.config import settings
 from app.core.constants import AuthProvider, UserRole
 from fastapi.testclient import TestClient
 
@@ -130,6 +131,28 @@ def test_login_returns_token_and_user(
     assert body["user"]["email"] == "bob@example.com"
 
 
+def test_login_sets_http_only_auth_cookie(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """Password login stores the JWT in an HTTP-only cookie for browser clients."""
+    seed_rbac_tables(fake_db)
+    register_payload = _register_payload(email="cookie@example.com", password="pa55word!!")
+    assert client.post("/api/v1/auth/register", json=register_payload).status_code == 200
+
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"email": "cookie@example.com", "password": "pa55word!!"},
+    )
+
+    assert response.status_code == 200
+    assert client.cookies.get(settings.auth_cookie_name)
+    set_cookie = response.headers["set-cookie"].lower()
+    assert settings.auth_cookie_name in set_cookie
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+
+
 def test_login_wrong_password_returns_401(
     client: TestClient,
     fake_db: FakeSupabase,
@@ -169,6 +192,52 @@ def test_me_with_valid_token_returns_claims(client: TestClient) -> None:
     assert body["user_id"] == "uid-42"
     assert body["email"] == "dora@example.com"
     assert body["role"] == "patient"
+
+
+def test_me_with_auth_cookie_returns_claims(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """A browser client can resolve /auth/me from the auth cookie alone."""
+    seed_rbac_tables(fake_db)
+    register_payload = _register_payload(email="cookie-me@example.com", password="pa55word!!")
+    assert client.post("/api/v1/auth/register", json=register_payload).status_code == 200
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "cookie-me@example.com", "password": "pa55word!!"},
+    )
+    assert login.status_code == 200
+
+    response = client.get("/api/v1/auth/me")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == "cookie-me@example.com"
+    assert body["role"] == "patient"
+
+
+def test_logout_clears_auth_cookie(
+    client: TestClient,
+    fake_db: FakeSupabase,
+) -> None:
+    """Logout expires the browser auth cookie."""
+    seed_rbac_tables(fake_db)
+    register_payload = _register_payload(email="logout@example.com", password="pa55word!!")
+    assert client.post("/api/v1/auth/register", json=register_payload).status_code == 200
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "logout@example.com", "password": "pa55word!!"},
+        ).status_code
+        == 200
+    )
+    assert client.cookies.get(settings.auth_cookie_name)
+
+    response = client.post("/api/v1/auth/logout")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "logged_out"}
+    assert not client.cookies.get(settings.auth_cookie_name)
 
 
 # ─── Google OAuth routes ─────────────────────────────────────────────────────
@@ -279,6 +348,8 @@ def test_google_exchange_returns_token_for_valid_code(
     assert body["access_token"]
     assert body["user"]["email"] == "exchange@example.com"
     assert body["user"]["auth_provider"] == "google"
+    assert client.cookies.get(settings.auth_cookie_name)
+    assert "httponly" in response.headers["set-cookie"].lower()
 
 
 def test_google_exchange_rejects_unknown_code(client: TestClient) -> None:

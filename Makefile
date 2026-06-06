@@ -17,6 +17,7 @@ SHELL := /bin/bash
 BACKEND_HOST ?= 127.0.0.1
 BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 8501
+WEB_PORT ?= 5173
 
 # Optional arguments for focused tests and Harness traces.
 # Example: make test-one PYTEST_ARGS='backend/tests/test_api_auth.py -q'
@@ -31,6 +32,7 @@ HARNESS := scripts/bin/harness-cli
 	help \
 	env install sync lock \
 	dev dev-be dev-fe \
+	dev-web build-web typecheck-web \
 	test test-be test-one \
 	format check ruff mypy precommit validate \
 	ingest \
@@ -48,6 +50,8 @@ help:
 	@printf "\nDevelopment\n"
 	@printf "  make dev-be           Run FastAPI backend on $(BACKEND_HOST):$(BACKEND_PORT)\n"
 	@printf "  make dev-fe           Run Streamlit frontend on port $(FRONTEND_PORT)\n"
+	@printf "  make dev-web          Run React frontend on port $(WEB_PORT)\n"
+	@printf "  make build-web        Build React frontend\n"
 	@printf "  make dev              Print commands for running backend and frontend\n"
 	@printf "  make ingest           Run backend ingestion CLI\n"
 	@printf "\nValidation\n"
@@ -99,6 +103,16 @@ dev-be:
 dev-fe:
 	cd frontend && uv run streamlit run main.py --server.port $(FRONTEND_PORT)
 
+# Run the React frontend that will replace Streamlit.
+dev-web:
+	cd web && npm run dev -- --port $(WEB_PORT)
+
+typecheck-web:
+	cd web && npm run typecheck
+
+build-web:
+	cd web && npm run build
+
 # Run the backend ingestion CLI for clinical knowledge documents.
 ingest:
 	cd backend && uv run python -m app.ingestion.cli
@@ -137,7 +151,7 @@ precommit:
 	uv run pre-commit run --all-files
 
 # Strongest local validation target before pushing important changes.
-validate: check precommit
+validate: check build-web precommit
 
 # Show the exact SQL apply order for Supabase SQL Editor.
 # Seeds are sorted together with migrations by filename timestamp.

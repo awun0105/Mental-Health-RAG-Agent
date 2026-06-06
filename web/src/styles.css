@@ -1,0 +1,213 @@
+:root {
+  font-family:
+    "IBM Plex Sans",
+    "Aptos",
+    system-ui,
+    sans-serif;
+  color: #18211f;
+  background: #e8efe4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  background: #1f4d3a;
+  color: #fff;
+  cursor: pointer;
+  padding: 0.85rem 1.2rem;
+}
+
+button.secondary {
+  background: #dbe7d5;
+  color: #1f4d3a;
+}
+
+button.google {
+  background: #17211e;
+  width: 100%;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+input {
+  border: 1px solid #c6d2bf;
+  border-radius: 16px;
+  padding: 0.9rem 1rem;
+  width: 100%;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 310px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #17211e;
+  color: #f7fbf3;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  justify-content: space-between;
+  padding: 2rem;
+}
+
+.brand-kicker {
+  color: #b6cda9;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.sidebar h1 {
+  font-family: Georgia, serif;
+  font-size: 2.4rem;
+  line-height: 0.95;
+  margin: 0;
+}
+
+.sidebar nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sidebar nav button {
+  background: transparent;
+  border: 1px solid rgb(255 255 255 / 18%);
+  text-align: left;
+}
+
+.account-card {
+  background: rgb(255 255 255 / 8%);
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem;
+}
+
+main {
+  padding: 3rem;
+}
+
+.hero {
+  align-items: stretch;
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: minmax(0, 1.2fr) 360px;
+}
+
+.hero h2 {
+  font-family: Georgia, serif;
+  font-size: clamp(3rem, 8vw, 6.8rem);
+  line-height: 0.9;
+  margin: 0 0 1.5rem;
+}
+
+.hero p {
+  color: #53635a;
+  font-size: 1.2rem;
+  max-width: 680px;
+}
+
+.status-panel,
+.auth-card,
+.panel {
+  background: #f8fbf3;
+  border: 1px solid #d6dfcf;
+  border-radius: 32px;
+  box-shadow: 0 24px 80px rgb(39 64 47 / 12%);
+  padding: 1.5rem;
+}
+
+.status-panel {
+  align-content: start;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.status-panel span {
+  color: #617166;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.status-panel strong {
+  font-size: 1.3rem;
+  margin-bottom: 1rem;
+}
+
+.card-grid {
+  display: grid;
+  gap: 1.2rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.auth-card h2,
+.auth-card h3,
+.panel h2 {
+  font-family: Georgia, serif;
+  margin-top: 0;
+}
+
+.notice {
+  border-radius: 18px;
+  margin-bottom: 1rem;
+  padding: 1rem;
+}
+
+.notice.success {
+  background: #dff1d7;
+  color: #245331;
+}
+
+.notice.error {
+  background: #ffe5dc;
+  color: #82341d;
+}
+
+pre {
+  background: #17211e;
+  border-radius: 20px;
+  color: #e8efe4;
+  overflow: auto;
+  padding: 1rem;
+}
+
+@media (max-width: 900px) {
+  .app-shell,
+  .hero,
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    min-height: auto;
+  }
+
+  main {
+    padding: 1.25rem;
+  }
+}

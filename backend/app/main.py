@@ -5,6 +5,12 @@ from app.api import admin, auth, consent, health, roles, sessions
 from app.core.config import settings
 from app.core.exceptions import AppException, app_exception_handler
 
+
+def _cors_allow_origins() -> list[str]:
+    """Parse comma-separated CORS origins from settings."""
+    return [origin.strip() for origin in settings.cors_allow_origins.split(",") if origin.strip()]
+
+
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -16,7 +22,7 @@ app.add_exception_handler(AppException, app_exception_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

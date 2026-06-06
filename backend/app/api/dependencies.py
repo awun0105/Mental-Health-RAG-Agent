@@ -1,10 +1,12 @@
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
-from fastapi import Depends
+from fastapi import Cookie, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.core.config import settings
 from app.core.constants import UserRole
+from app.core.exceptions import UnauthorizedError
 from app.core.security import (
     CurrentUserClaims,
     decode_access_token,
@@ -32,7 +34,7 @@ from app.services.consent_service import ConsentService
 from app.services.session_service import SessionService
 from supabase import Client
 
-bearer_scheme = HTTPBearer(auto_error=True)
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_supabase() -> Client:
@@ -206,12 +208,17 @@ def get_session_service(
 
 def get_current_user(
     credentials: Annotated[
-        HTTPAuthorizationCredentials,
+        HTTPAuthorizationCredentials | None,
         Depends(bearer_scheme),
     ],
+    auth_cookie: Annotated[str | None, Cookie(alias=settings.auth_cookie_name)] = None,
 ) -> CurrentUserClaims:
-    """Return current authenticated user claims from bearer token."""
-    return decode_access_token(credentials.credentials)
+    """Return current authenticated user claims from Bearer token or auth cookie."""
+    if credentials is not None:
+        return decode_access_token(credentials.credentials)
+    if auth_cookie:
+        return decode_access_token(auth_cookie)
+    raise UnauthorizedError("Not authenticated")
 
 
 def require_current_admin(
