@@ -1,0 +1,35 @@
+name: Supabase Keepalive
+
+on:
+  schedule:
+    # Supabase Free projects can pause after inactivity. One lightweight
+    # backend ping per day is enough for development/staging keepalive.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Supabase health endpoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Call backend Supabase health endpoint
+        env:
+          KEEPALIVE_URL: ${{ secrets.SUPABASE_KEEPALIVE_URL }}
+          KEEPALIVE_TOKEN: ${{ secrets.SUPABASE_KEEPALIVE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${KEEPALIVE_URL}" ]; then
+            echo "Missing required GitHub secret: SUPABASE_KEEPALIVE_URL"
+            exit 1
+          fi
+
+          if [ -n "${KEEPALIVE_TOKEN}" ]; then
+            curl --fail --silent --show-error \
+              --header "X-Keepalive-Token: ${KEEPALIVE_TOKEN}" \
+              "${KEEPALIVE_URL}"
+          else
+            curl --fail --silent --show-error "${KEEPALIVE_URL}"
+          fi

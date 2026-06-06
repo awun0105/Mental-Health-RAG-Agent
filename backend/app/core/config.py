@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # =============================================================================
     supabase_url: str = ""
     supabase_key: str = ""
+    keepalive_token: str = ""
 
     # =============================================================================
     # JWT (Application Auth)
