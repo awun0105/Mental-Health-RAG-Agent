@@ -346,7 +346,11 @@ function AuthPage({
           Continue with Google to use the production browser flow. Password auth
           remains available for local development accounts.
         </p>
-        <button className="google" onClick={continueWithGoogle} disabled={isPending}>
+        <button
+          className={`google ${isPending ? "busy" : ""}`}
+          onClick={continueWithGoogle}
+          disabled={isPending}
+        >
           Continue with Google
         </button>
       </article>
@@ -360,7 +364,9 @@ function AuthPage({
             placeholder="Password"
             type="password"
           />
-          <button disabled={isPending}>Log in</button>
+          <button className={isPending ? "busy" : ""} disabled={isPending}>
+            Log in
+          </button>
         </form>
       </article>
       <article className="auth-card">
@@ -378,7 +384,9 @@ function AuthPage({
             placeholder="Password"
             type="password"
           />
-          <button disabled={isPending}>Create and sign in</button>
+          <button className={isPending ? "busy" : ""} disabled={isPending}>
+            Create and sign in
+          </button>
         </form>
       </article>
     </section>
@@ -424,7 +432,11 @@ function ConsentPage({
       ) : (
         <p>Loading consent status...</p>
       )}
-      <button onClick={submitConsent} disabled={!consent || isPending || consent.has_valid_consent}>
+      <button
+        className={isPending ? "busy" : ""}
+        onClick={submitConsent}
+        disabled={!consent || isPending || consent.has_valid_consent}
+      >
         {consent?.has_valid_consent ? "Consent already accepted" : "Accept current policy"}
       </button>
     </section>
@@ -505,7 +517,7 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
           <h2>Sessions</h2>
           <p>Start, inspect, and close your own patient support sessions.</p>
         </div>
-        <button onClick={handleStartSession} disabled={isPending}>
+        <button className={isPending ? "busy" : ""} onClick={handleStartSession} disabled={isPending}>
           Start new session
         </button>
       </div>
@@ -552,7 +564,7 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
               <h4>Metadata</h4>
               <pre>{JSON.stringify(selected.metadata, null, 2)}</pre>
               <button
-                className="danger"
+                className={`danger ${isPending ? "busy" : ""}`}
                 onClick={() => handleCloseSession(selected.id)}
                 disabled={isPending || selected.status !== "active"}
               >

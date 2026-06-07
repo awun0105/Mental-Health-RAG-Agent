@@ -38,3 +38,5 @@ make build-web
 - `make check` passed: Ruff, Mypy, and 114 backend tests.
 - `make validate` passed: backend checks, React production build, and
   pre-commit hooks.
+- Human-confirmed browser smoke passed for Google login, consent gate, session
+  start/list/detail/close, and reload persistence.
