@@ -35,6 +35,10 @@ button.secondary {
   color: #1f4d3a;
 }
 
+button.danger {
+  background: #82341d;
+}
+
 button.google {
   background: #17211e;
   width: 100%;
@@ -99,6 +103,11 @@ form {
   text-align: left;
 }
 
+.sidebar nav button.active {
+  background: #f7fbf3;
+  color: #17211e;
+}
+
 .account-card {
   background: rgb(255 255 255 / 8%);
   border-radius: 24px;
@@ -142,6 +151,18 @@ main {
   padding: 1.5rem;
 }
 
+.auth-layout {
+  display: grid;
+  gap: 1.2rem;
+  grid-template-columns: minmax(280px, 1.2fr) repeat(2, minmax(240px, 0.8fr));
+}
+
+.primary-auth {
+  background:
+    radial-gradient(circle at top right, rgb(182 205 169 / 45%), transparent 34%),
+    #f8fbf3;
+}
+
 .status-panel {
   align-content: start;
   display: grid;
@@ -165,9 +186,108 @@ main {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.session-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+}
+
+.workspace-header {
+  align-items: end;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.workspace-header h2 {
+  font-family: Georgia, serif;
+  font-size: clamp(2.7rem, 6vw, 5.5rem);
+  line-height: 0.9;
+  margin: 0;
+}
+
+.workspace-header p {
+  color: #53635a;
+}
+
+.session-grid {
+  display: grid;
+  gap: 1.2rem;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(320px, 1.15fr);
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.session-row {
+  align-items: center;
+  background: #eef5e9;
+  color: #17211e;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr auto;
+  text-align: left;
+}
+
+.session-row.selected {
+  outline: 3px solid #8daa7c;
+}
+
+.session-row small {
+  color: #617166;
+  grid-column: 1 / -1;
+}
+
+.status-pill {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.8rem;
+  justify-content: center;
+  padding: 0.35rem 0.65rem;
+  text-transform: uppercase;
+}
+
+.status-pill.active {
+  background: #dff1d7;
+  color: #245331;
+}
+
+.status-pill.closed {
+  background: #dbe1d8;
+  color: #53635a;
+}
+
+.detail-grid,
+.consent-status {
+  display: grid;
+  gap: 0.6rem 1rem;
+  grid-template-columns: max-content 1fr;
+  margin-bottom: 1rem;
+}
+
+.detail-grid span,
+.consent-status span {
+  color: #617166;
+  text-transform: uppercase;
+}
+
+.empty-state {
+  background: #eef5e9;
+  border: 1px dashed #b8c8af;
+  border-radius: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem;
+}
+
 .auth-card h2,
 .auth-card h3,
-.panel h2 {
+.panel h2,
+.panel h3 {
   font-family: Georgia, serif;
   margin-top: 0;
 }
@@ -199,8 +319,15 @@ pre {
 @media (max-width: 900px) {
   .app-shell,
   .hero,
-  .card-grid {
+  .card-grid,
+  .auth-layout,
+  .session-grid {
     grid-template-columns: 1fr;
+  }
+
+  .workspace-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .sidebar {

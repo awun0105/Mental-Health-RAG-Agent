@@ -23,6 +23,23 @@ export type ConsentStatus = {
   latest_accepted_policy_version: string | null;
 };
 
+export type SessionStatus = "active" | "closed";
+
+export type ChatSession = {
+  id: string;
+  user_id: string;
+  status: SessionStatus;
+  started_at: string;
+  ended_at: string | null;
+  metadata: Record<string, unknown>;
+};
+
+export type SessionListResponse = {
+  items: ChatSession[];
+  limit: number;
+  offset: number;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -99,5 +116,27 @@ export async function acceptConsent(policyVersion: string): Promise<void> {
   await request("/consent/accept", {
     method: "POST",
     body: JSON.stringify({ policy_version: policyVersion }),
+  });
+}
+
+export async function listMySessions(): Promise<SessionListResponse> {
+  return request<SessionListResponse>("/sessions/me");
+}
+
+export async function startSession(): Promise<ChatSession> {
+  return request<ChatSession>("/sessions", {
+    method: "POST",
+    body: JSON.stringify({ metadata: { entry_point: "react_patient_ui" } }),
+  });
+}
+
+export async function getSession(sessionId: string): Promise<ChatSession> {
+  return request<ChatSession>(`/sessions/${sessionId}`);
+}
+
+export async function closeSession(sessionId: string): Promise<ChatSession> {
+  return request<ChatSession>(`/sessions/${sessionId}/close`, {
+    method: "POST",
+    body: JSON.stringify({ reason: "user_end" }),
   });
 }
