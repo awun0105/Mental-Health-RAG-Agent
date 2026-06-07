@@ -44,6 +44,8 @@ async def test_get_permission_codes_for_user_returns_patient_set(
         "session:create",
         "session:read",
         "session:close",
+        "message:create",
+        "message:read",
         "consent:accept",
         "consent:read_status",
     }

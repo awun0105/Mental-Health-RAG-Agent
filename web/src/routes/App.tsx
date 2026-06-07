@@ -2,16 +2,19 @@ import { FormEvent, useEffect, useState, useTransition } from "react";
 
 import {
   ApiError,
+  ChatMessage,
   ChatSession,
   ConsentStatus,
   CurrentUserClaims,
   acceptConsent,
   closeSession,
+  createPatientMessage,
   exchangeGoogleAuthCode,
   getConsentStatus,
   getGoogleOAuthUrl,
   getMe,
   getSession,
+  listSessionMessages,
   listMySessions,
   login,
   logout,
@@ -446,8 +449,23 @@ function ConsentPage({
 function PatientSessionsPage({ onError }: { onError: (message: string) => void }) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [selected, setSelected] = useState<ChatSession | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messageText, setMessageText] = useState("");
   const [loading, setLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  async function loadMessages(sessionId: string) {
+    setMessagesLoading(true);
+    try {
+      const body = await listSessionMessages(sessionId);
+      setMessages(body.items);
+    } catch (err) {
+      onError(errorMessage(err));
+    } finally {
+      setMessagesLoading(false);
+    }
+  }
 
   async function loadSessions(nextSelectedId?: string) {
     setLoading(true);
@@ -458,13 +476,23 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
       if (nextSelectedId) {
         const nextSelected = body.items.find((session) => session.id === nextSelectedId);
         setSelected(nextSelected ?? body.items[0] ?? null);
+        if (nextSelected) await loadMessages(nextSelected.id);
         return;
       }
 
+      let selectedSessionId: string | null = null;
       setSelected((current) => {
-        if (!current) return body.items[0] ?? null;
-        return body.items.find((session) => session.id === current.id) ?? body.items[0] ?? null;
+        const nextSelected = current
+          ? (body.items.find((session) => session.id === current.id) ?? body.items[0] ?? null)
+          : (body.items[0] ?? null);
+        selectedSessionId = nextSelected?.id ?? null;
+        return nextSelected;
       });
+      if (selectedSessionId) {
+        await loadMessages(selectedSessionId);
+      } else {
+        setMessages([]);
+      }
     } catch (err) {
       onError(errorMessage(err));
     } finally {
@@ -492,6 +520,7 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
       try {
         const session = await getSession(sessionId);
         setSelected(session);
+        await loadMessages(session.id);
       } catch (err) {
         onError(errorMessage(err));
       }
@@ -503,6 +532,23 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
       try {
         const session = await closeSession(sessionId);
         await loadSessions(session.id);
+      } catch (err) {
+        onError(errorMessage(err));
+      }
+    });
+  }
+
+  function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const content = messageText.trim();
+    if (!content) return;
+
+    startTransition(async () => {
+      try {
+        await createPatientMessage(selected.id, content);
+        setMessageText("");
+        await loadMessages(selected.id);
       } catch (err) {
         onError(errorMessage(err));
       }
@@ -570,6 +616,15 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
               >
                 {selected.status === "active" ? "Close session" : "Session closed"}
               </button>
+              <TranscriptPanel
+                messages={messages}
+                messagesLoading={messagesLoading}
+                messageText={messageText}
+                sessionStatus={selected.status}
+                isPending={isPending}
+                onMessageTextChange={setMessageText}
+                onSendMessage={handleSendMessage}
+              />
             </>
           ) : (
             <div className="empty-state">
@@ -580,6 +635,65 @@ function PatientSessionsPage({ onError }: { onError: (message: string) => void }
         </article>
       </div>
     </section>
+  );
+}
+
+function TranscriptPanel({
+  messages,
+  messagesLoading,
+  messageText,
+  sessionStatus,
+  isPending,
+  onMessageTextChange,
+  onSendMessage,
+}: {
+  messages: ChatMessage[];
+  messagesLoading: boolean;
+  messageText: string;
+  sessionStatus: ChatSession["status"];
+  isPending: boolean;
+  onMessageTextChange: (value: string) => void;
+  onSendMessage: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const canSend = sessionStatus === "active" && messageText.trim().length > 0 && !isPending;
+
+  return (
+    <div className="transcript-panel">
+      <h4>Transcript</h4>
+      {messagesLoading ? <p>Loading messages...</p> : null}
+      {!messagesLoading && messages.length === 0 ? (
+        <div className="empty-state">
+          <strong>No messages yet.</strong>
+          <span>Send the first patient message for this session.</span>
+        </div>
+      ) : null}
+      <div className="message-list">
+        {messages.map((message) => (
+          <article className={`message-bubble ${message.role}`} key={message.id}>
+            <div>
+              <strong>{message.role}</strong>
+              <small>{formatDate(message.created_at)}</small>
+            </div>
+            <p>{message.content}</p>
+          </article>
+        ))}
+      </div>
+      <form className="message-form" onSubmit={onSendMessage}>
+        <textarea
+          value={messageText}
+          onChange={(event) => onMessageTextChange(event.target.value)}
+          placeholder={
+            sessionStatus === "active"
+              ? "Write a patient message..."
+              : "Closed sessions cannot accept new messages."
+          }
+          disabled={sessionStatus !== "active" || isPending}
+        />
+        <button className={isPending ? "busy" : ""} disabled={!canSend}>
+          Send patient message
+        </button>
+      </form>
+    </div>
   );
 }
 

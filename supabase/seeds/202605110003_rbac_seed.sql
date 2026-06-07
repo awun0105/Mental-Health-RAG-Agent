@@ -64,6 +64,10 @@ INSERT INTO permissions (code, module, action, description) VALUES
     ('session:read',             'session',    'read',        'Read chat sessions (resource-scoped in service layer)'),
     ('session:close',            'session',    'close',       'Close a chat session'),
 
+    -- chat messages
+    ('message:create',           'message',    'create',      'Create patient chat messages'),
+    ('message:read',             'message',    'read',        'Read chat messages (resource-scoped in service layer)'),
+
     -- patient data
     ('patient:read',             'patient',    'read',        'Read patient data (resource-scoped in service layer)'),
 
@@ -114,6 +118,8 @@ JOIN permissions p
         'session:create',
         'session:read',
         'session:close',
+        'message:create',
+        'message:read',
         'consent:accept',
         'consent:read_status'
     )

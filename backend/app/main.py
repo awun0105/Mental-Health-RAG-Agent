@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, auth, consent, health, roles, sessions
+from app.api import admin, auth, consent, health, messages, roles, sessions
 from app.core.config import settings
 from app.core.exceptions import AppException, app_exception_handler
 
@@ -34,3 +34,4 @@ app.include_router(consent.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(roles.router, prefix="/api/v1")
 app.include_router(sessions.router, prefix="/api/v1")
+app.include_router(messages.router, prefix="/api/v1")

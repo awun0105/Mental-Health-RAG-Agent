@@ -40,6 +40,25 @@ export type SessionListResponse = {
   offset: number;
 };
 
+export type MessageRole = "patient" | "assistant" | "system" | "doctor";
+
+export type ChatMessage = {
+  id: string;
+  session_id: string;
+  role: MessageRole;
+  content: string;
+  safety_flag: boolean;
+  safety_severity: "none" | "low" | "medium" | "high" | "critical";
+  trace_id: string | null;
+  created_at: string;
+};
+
+export type MessageListResponse = {
+  items: ChatMessage[];
+  limit: number;
+  offset: number;
+};
+
 export class ApiError extends Error {
   status: number;
 
@@ -138,5 +157,16 @@ export async function closeSession(sessionId: string): Promise<ChatSession> {
   return request<ChatSession>(`/sessions/${sessionId}/close`, {
     method: "POST",
     body: JSON.stringify({ reason: "user_end" }),
+  });
+}
+
+export async function listSessionMessages(sessionId: string): Promise<MessageListResponse> {
+  return request<MessageListResponse>(`/sessions/${sessionId}/messages`);
+}
+
+export async function createPatientMessage(sessionId: string, content: string): Promise<ChatMessage> {
+  return request<ChatMessage>(`/sessions/${sessionId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
   });
 }

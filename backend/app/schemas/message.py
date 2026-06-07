@@ -21,6 +21,12 @@ class MessageCreate(BaseModel):
     trace_id: str | None = None
 
 
+class PatientMessageCreateRequest(BaseModel):
+    """Public request for a patient-created session message."""
+
+    content: str = Field(min_length=1)
+
+
 class MessageResponse(BaseModel):
     """Response schema for a single chat_messages row."""
 
@@ -34,3 +40,11 @@ class MessageResponse(BaseModel):
     safety_severity: SafetySeverity
     trace_id: str | None = None
     created_at: datetime
+
+
+class MessageListResponse(BaseModel):
+    """Response schema for a paginated session transcript."""
+
+    items: list[MessageResponse]
+    limit: int
+    offset: int

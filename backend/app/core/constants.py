@@ -27,9 +27,10 @@ class SessionStatus(str, Enum):
 class MessageRole(str, Enum):
     """Roles for messages stored in chat_messages."""
 
-    USER = "user"
+    PATIENT = "patient"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+    DOCTOR = "doctor"
 
 
 class SafetySeverity(str, Enum):

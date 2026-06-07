@@ -248,7 +248,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
 
     role VARCHAR(20) NOT NULL
-        CHECK (role IN ('user', 'assistant', 'system')),
+        CHECK (role IN ('patient', 'assistant', 'system', 'doctor')),
 
     content TEXT NOT NULL,
 

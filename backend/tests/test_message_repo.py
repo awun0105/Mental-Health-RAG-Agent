@@ -16,7 +16,7 @@ def _seed_message(
     fake_db: FakeSupabase,
     *,
     session_id: str,
-    role: MessageRole = MessageRole.USER,
+    role: MessageRole = MessageRole.PATIENT,
     content: str = "hello",
     created_at: datetime | None = None,
 ) -> str:
@@ -50,13 +50,13 @@ async def test_create_returns_message_response(
     message = await message_repo.create(
         {
             "session_id": session_id,
-            "role": MessageRole.USER.value,
+            "role": MessageRole.PATIENT.value,
             "content": "hi",
         },
     )
 
     assert message.session_id == session_id
-    assert message.role == MessageRole.USER
+    assert message.role == MessageRole.PATIENT
     assert message.content == "hi"
     assert message.safety_flag is False
     assert message.safety_severity == SafetySeverity.NONE

@@ -31,6 +31,7 @@ from app.services.audit_service import AuditService
 from app.services.auth_service import AuthService
 from app.services.authorization_service import AuthorizationService
 from app.services.consent_service import ConsentService
+from app.services.message_service import MessageService
 from app.services.session_service import SessionService
 from supabase import Client
 
@@ -202,6 +203,22 @@ def get_session_service(
         consent_repo=consent_repo,
         assignment_repo=assignment_repo,
         audit_service=audit_service,
+        authorization_service=authorization_service,
+    )
+
+
+def get_message_service(
+    message_repo: Annotated[MessageRepository, Depends(get_message_repo)],
+    session_repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    authorization_service: Annotated[
+        AuthorizationService,
+        Depends(get_authorization_service),
+    ],
+) -> MessageService:
+    """Return a message service instance."""
+    return MessageService(
+        message_repo=message_repo,
+        session_repo=session_repo,
         authorization_service=authorization_service,
     )
 
