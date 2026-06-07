@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS keepalive_pings (
 CREATE INDEX IF NOT EXISTS idx_keepalive_pings_pinged_at
 ON keepalive_pings(pinged_at DESC);
 
+ALTER TABLE keepalive_pings ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE keepalive_pings FROM anon;
+REVOKE ALL ON TABLE keepalive_pings FROM authenticated;
+
 COMMENT ON TABLE keepalive_pings IS
 'Low-risk activity table used by scheduled keepalive automation for local-development Supabase projects.';
 
