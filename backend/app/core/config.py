@@ -36,7 +36,9 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = False
     auth_cookie_samesite: str = "lax"
     auth_cookie_domain: str = ""
-    cors_allow_origins: str = "http://localhost:5173,http://localhost:8501"
+    cors_allow_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8501,http://127.0.0.1:8501"
+    )
 
     # =============================================================================
     # OAuth (Google)
