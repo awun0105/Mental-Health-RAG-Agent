@@ -24,3 +24,6 @@
 - Login locally.
 - Reload browser.
 - Confirm `/auth/me` still resolves through cookie.
+- Continue with Google.
+- Confirm Supabase/Google callback redirects back to React.
+- Confirm reload does not sign out the Google-authenticated account.
