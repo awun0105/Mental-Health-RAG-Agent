@@ -25,8 +25,9 @@ CREATE TABLE intake (
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     input_type    TEXT    NOT NULL
                          CHECK(input_type IN (
-                           'new_spec','spec_slice','change_request',
-                           'new_initiative','maintenance','harness_improvement'
+                           'new_spec','existing_project_onboarding',
+                           'spec_slice','change_request','new_initiative',
+                           'maintenance','harness_improvement'
                          )),
     summary       TEXT    NOT NULL,
     risk_lane     TEXT    NOT NULL
@@ -50,7 +51,8 @@ CREATE TABLE story (
     contract_doc     TEXT,               -- path to product doc
     status           TEXT NOT NULL DEFAULT 'planned'
                      CHECK(status IN (
-                       'planned','in_progress','implemented','changed','retired'
+                       'planned','in_progress','partial','unknown',
+                       'not_implemented','implemented','changed','retired'
                      )),
     unit_proof       INTEGER NOT NULL DEFAULT 0,
     integration_proof INTEGER NOT NULL DEFAULT 0,
